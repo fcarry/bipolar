@@ -1,0 +1,39 @@
+# =====================================================
+# Bipolar — Medication Tracker
+# docker-compose.yml
+# =====================================================
+# Usage:
+#   docker compose build
+#   docker compose up -d
+#   docker compose logs -f bipolar
+# =====================================================
+
+services:
+  bipolar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bipolar-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Redundant but safe — ensures timezone inside the container
+      TZ: America/Montevideo
+    volumes:
+      # Single persistent volume: DB + audio files + xlsx reports
+      - ./data:/app/data
+    ports:
+      # Bind only to loopback — nginx on the host exposes it publicly
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

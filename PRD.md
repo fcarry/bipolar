@@ -889,4 +889,183 @@ docker compose up -d
 
 ---
 
+**FIN DEL PRD ORIGINAL**
+
+---
+
+## ANEXO A — Cambios acordados 2026-04-22
+
+Este anexo modifica el PRD original. En caso de conflicto, **gana el anexo**.
+
+### A.1 Modelo de usuario — campos adicionales
+
+`users` agrega dos columnas (NOT NULL para `role='user'`, NULL para `role='admin'`):
+
+```sql
+ALTER TABLE users ADD COLUMN patientEmail TEXT;   -- email del propio paciente
+ALTER TABLE users ADD COLUMN patientPhone TEXT;   -- E.164 del propio paciente
+```
+
+**Form admin de creación/edición de usuario** ahora pide 8 campos:
+
+| Campo | Required | Notas |
+|---|---|---|
+| username | sí | único |
+| password | sí (en create) | min 8 chars |
+| fullName | sí | |
+| medicationTime | sí | HH:mm |
+| patientEmail | sí | email del paciente |
+| patientPhone | sí | E.164 — usado en Round 3 de escalada |
+| emergencyContactEmail | sí | email |
+| emergencyContactPhone | sí | E.164 |
+
+El **email "Aviso: se ha notificado a tu contacto de emergencia"** del PRD §9.5.4 se manda a `patientEmail` (no al `username`, que sigue siendo solo identificador de login).
+
+### A.2 Definición de "missed" — deadline duro de 12h
+
+Reemplaza §9.1.
+
+Un usuario tiene **incidente en el día X** si:
+- **(a)** No existe `medication_log` cuyo `scheduledFor` caiga en X **y ya pasaron 12 horas desde `scheduledFor`** → `missed`, **O**
+- **(b)** Existe un log para X con `delayMinutes > 240` (delay > 4h) → `late`.
+
+Diferencia clave con el PRD original: un día se marca `missed` apenas se cumplen 12h del horario programado, sin esperar a las 23:59. Si la medicación es a las 08:00, a las 20:00 ya cuenta como `missed` y se evalúa la regla de alerta.
+
+**Implementación:**
+- El cron de reintentos (que ya corre cada minuto, §11.5) también recorre usuarios y, si hay alguno cuyo `scheduledFor` de hoy fue hace ≥ 12 h sin log → upsert `daily_status='missed'` y reevalúa ventana de 7 días → dispara alerta si aplica.
+- El cron diario de las 23:59 sigue existiendo como red de seguridad/idempotencia.
+
+### A.3 Ventana mínima para llamar — 9 AM UY
+
+Solo límite **inferior**: las llamadas Twilio NO se inician antes de las **09:00 America/Montevideo**.
+
+- Si el evento que dispara la alerta cae **antes de las 09:00 UY** → email se envía inmediato, llamada **se posterga al próximo 09:00**.
+- Una vez arrancada la secuencia, los intervalos de 10 min entre reintentos y la espera de 4 h entre rounds son **rígidos** (pueden ejecutarse a cualquier hora, incluso de madrugada).
+- Sin límite superior — una alerta de las 21:50 puede generar llamadas hasta las 22:30 sin problema.
+
+### A.4 Escalada de llamadas — 3 rounds
+
+Reemplaza §9.6.
+
+```
+Round 1 (a contacto de emergencia)
+  T+00:00  Llamada #1
+  T+00:10  Reintento #2  (si #1 falló)
+  T+00:20  Reintento #3
+  T+00:30  Reintento #4
+
+  Si en cualquier intento hay éxito (completed, duration ≥ 5s, no fue máquina):
+    → cancelar pendientes, marcar alert.contactReached='emergency_round1', fin.
+
+  Si los 4 intentos fallan:
+    → esperar 4 horas
+
+Round 2 (a contacto de emergencia, mismo número)
+  T+04:30  Llamada #1
+  T+04:40  Reintento #2
+  T+04:50  Reintento #3
+  T+05:00  Reintento #4
+
+  Éxito → marcar alert.contactReached='emergency_round2', fin.
+  Falla total → seguir a Round 3.
+
+Round 3 (al PROPIO PACIENTE — patientPhone)
+  T+05:00 + (delay para próxima 09:00 UY si corresponde)
+  Llamada #1, +10, +20, +30 (mismo patrón de 4 intentos)
+
+  Éxito → marcar alert.contactReached='patient', fin.
+  Falla total → marcar alert.callsExhausted=true, visible en /admin/alerts.
+```
+
+**Reglas adicionales:**
+- El **inicio** de cada Round respeta la ventana 9 AM UY (igual que el inicio de la alerta).
+- Los 4 intentos dentro de un Round son rígidos cada 10 min, sin pausa por horario.
+- "Éxito" se evalúa según §11.6 (completed + duration ≥ 5s + no fue máquina).
+
+### A.5 Cambios al schema
+
+`call_logs` agrega columna `roundNumber`:
+
+```sql
+ALTER TABLE call_logs ADD COLUMN roundNumber INTEGER NOT NULL DEFAULT 1;
+-- 1 = Round 1 (emergency), 2 = Round 2 (emergency 4h después), 3 = Round 3 (patient)
+```
+
+`alerts` agrega campos para tracking de escalada:
+
+```sql
+ALTER TABLE alerts ADD COLUMN contactReached TEXT;
+-- valores: 'emergency_round1', 'emergency_round2', 'patient', NULL si no contactado
+ALTER TABLE alerts ADD COLUMN callsExhausted INTEGER NOT NULL DEFAULT 0;
+-- 1 si los 12 intentos totales fallaron
+ALTER TABLE alerts ADD COLUMN nextRoundStartAt TEXT;
+-- ISO timestamp del próximo Round programado (para que el cron lo dispare)
+```
+
+### A.6 Mensaje TTS de Round 3 — al paciente
+
+El TwiML de §11.2 se mantiene para Rounds 1 y 2. Para Round 3 (llamada al paciente), nuevo guión:
+
+```xml
+<Response>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">
+    Hola {fullName}. Este es un aviso automático del sistema
+    de seguimiento de tu medicación.
+  </Say>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">
+    Detectamos que no registraste tus tomas en los últimos días
+    y tu contacto de emergencia no atendió nuestras llamadas.
+    Por favor, abrí la aplicación, registrá tu toma y contactate
+    con tu red de apoyo.
+  </Say>
+  <Pause length="2"/>
+  <Say language="es-MX" voice="Polly.Mia">
+    Repito: te pedimos que abras la aplicación y registres tu toma.
+  </Say>
+  <Pause length="1"/>
+</Response>
+```
+
+El backend selecciona qué TwiML servir en `/api/twilio/twiml/:callLogId` según `roundNumber` del `call_log` correspondiente.
+
+### A.7 lib/twilio.ts — cambios
+
+Funciones nuevas/modificadas:
+
+- `initiateCall(alertId, userId, toNumber, attemptNumber, roundNumber)` — agrega `roundNumber`.
+- `scheduleNextRound(alertId, currentRound)` — al fallar el último intento de Round 1 o 2, calcula `T + 4h` (o `próximo 09:00 UY` si cae antes) y persiste en `alerts.nextRoundStartAt`.
+- `triggerScheduledRounds()` — corre desde el cron cada minuto: busca `alerts WHERE nextRoundStartAt <= now AND contactReached IS NULL AND callsExhausted=0`, dispara primer intento del Round siguiente.
+- El número y guión TTS por Round se resuelven dentro de `lib/twilio.ts`:
+  - Round 1, 2 → `user.emergencyContactPhone`, TwiML §11.2
+  - Round 3 → `user.patientPhone`, TwiML §A.6
+
+### A.8 Renombrado del dominio
+
+Todo el sistema corre en **`bipolar.tumvp.uy`** (no `mandarinasoftware.uy`). Cert Let's Encrypt emitido el 2026-04-22, expira 2026-07-21, renovación auto vía `certbot.timer`.
+
+### A.9 Puerto
+
+El container expone el puerto `3000` internamente, pero en el host se bindea a `127.0.0.1:3010` (el puerto 3000 está ocupado por UNRegalo). Nginx hace proxy a `127.0.0.1:3010`.
+
+### A.10 Email From
+
+`MAIL_FROM="Bipolar Alert <info@tumvp.uy>"` — dominio `tumvp.uy` debe estar verificado en Resend (DKIM + SPF) antes del primer envío. Si no está, agregar registros en hostingenlaweb.com (DNS de tumvp.uy).
+
+### A.11 Criterios de aceptación nuevos / modificados
+
+Reemplazan/agregan en §18:
+
+- ✅ Form admin permite cargar `patientEmail` y `patientPhone` y rechaza email/E.164 inválido.
+- ✅ A las 12 h de la `medicationTime` sin tap, `daily_status` queda en `missed` automáticamente (sin esperar al cron de 23:59).
+- ✅ Una alerta disparada a las 03:00 UY agenda la primera llamada para las 09:00 UY del mismo día. El email sale inmediato.
+- ✅ Round 1: 4 intentos cada 10 min al `emergencyContactPhone`. Si todos fallan, Round 2 arranca exactamente 4 h después del último fallo (ajustado a la próxima 09:00 si cae antes).
+- ✅ Round 2: idéntico patrón. Si todos fallan, Round 3 arranca al `patientPhone` (con TwiML específico §A.6).
+- ✅ Si los 12 intentos totales fallan: `alerts.callsExhausted=true` y badge 🔴 en `/admin/alerts`.
+- ✅ Cualquier llamada exitosa cancela los pendientes (intentos del round actual + rounds futuros) y guarda `alerts.contactReached`.
+- ✅ Reintentos sobreviven a `docker compose restart` (persistidos en `call_logs.nextRetryAt` + `alerts.nextRoundStartAt`).
+
+---
+
 **FIN DEL PRD**

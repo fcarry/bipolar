@@ -1,8 +1,8 @@
 # PRD — Sistema de Seguimiento de Medicación "Bipolar"
 
-**Repo target:** `bipolar.mandarinasoftware.uy`
+**Repo target:** `bipolar.tumvp.uy`
 **Stack:** Next.js 15 (App Router) + React 19 + Node.js + SQLite (better-sqlite3) + TypeScript
-**Deployment:** VPS con dominio `bipolar.mandarinasoftware.uy` (HTTPS obligatorio)
+**Deployment:** VPS con dominio `bipolar.tumvp.uy` (HTTPS obligatorio)
 
 ---
 
@@ -493,7 +493,7 @@ Todas las rutas bajo `/api`. Respuestas JSON. Errores con shape `{ error: string
 ├── Dockerfile
 ├── docker-compose.yml
 ├── nginx/
-│   └── bipolar.mandarinasoftware.uy.conf   # vhost de referencia (se copia al host)
+│   └── bipolar.tumvp.uy.conf   # vhost de referencia (se copia al host)
 ├── next.config.ts
 ├── drizzle.config.ts
 ├── package.json
@@ -560,7 +560,7 @@ Todas las rutas bajo `/api`. Respuestas JSON. Errores con shape `{ error: string
 # Server
 NODE_ENV=production
 PORT=3000
-APP_URL=https://bipolar.mandarinasoftware.uy
+APP_URL=https://bipolar.tumvp.uy
 
 # Database
 DATABASE_PATH=./data/bipolar.db
@@ -572,7 +572,7 @@ ADMIN_PASSWORD=                     # definir fuerte
 
 # Email (Resend)
 RESEND_API_KEY=re_xxxxxxxxxxxx
-MAIL_FROM="Bipolar Alert <alerts@mandarinasoftware.uy>"
+MAIL_FROM="Bipolar Alert <alerts@tumvp.uy>"
 
 # Twilio Voice
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -662,7 +662,7 @@ services:
     volumes:
       - ./data:/app/data          # persistencia: DB + audios + reportes
     ports:
-      - "127.0.0.1:3000:3000"     # bind solo a loopback; nginx lo expone
+      - "127.0.0.1:3010:3000"     # bind solo a loopback; nginx lo expone
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
       interval: 30s
@@ -703,14 +703,14 @@ docker compose logs -f bipolar
 
 ### 16.5 Nginx vhost
 
-**Archivo:** `/etc/nginx/sites-available/bipolar.mandarinasoftware.uy`
+**Archivo:** `/etc/nginx/sites-available/bipolar.tumvp.uy`
 
 ```nginx
 # HTTP → HTTPS redirect
 server {
     listen 80;
     listen [::]:80;
-    server_name bipolar.mandarinasoftware.uy;
+    server_name bipolar.tumvp.uy;
     return 301 https://$host$request_uri;
 }
 
@@ -718,11 +718,11 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name bipolar.mandarinasoftware.uy;
+    server_name bipolar.tumvp.uy;
 
     # TLS (certbot gestiona estos archivos)
-    ssl_certificate     /etc/letsencrypt/live/bipolar.mandarinasoftware.uy/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/bipolar.mandarinasoftware.uy/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/bipolar.tumvp.uy/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bipolar.tumvp.uy/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
 
@@ -739,9 +739,9 @@ server {
     access_log /var/log/nginx/bipolar.access.log;
     error_log  /var/log/nginx/bipolar.error.log;
 
-    # Proxy al contenedor Docker (bind en 127.0.0.1:3000)
+    # Proxy al contenedor Docker (bind en 127.0.0.1:3010)
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3010;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
@@ -757,7 +757,7 @@ server {
     # Webhooks Twilio: accesibles públicamente (sin auth, validan firma internamente)
     # NOTA: la validación de firma requiere que `Host` llegue correcto al backend.
     location /api/twilio/ {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3010;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
@@ -769,9 +769,9 @@ server {
 
 **Activación:**
 ```bash
-sudo ln -s /etc/nginx/sites-available/bipolar.mandarinasoftware.uy \
+sudo ln -s /etc/nginx/sites-available/bipolar.tumvp.uy \
            /etc/nginx/sites-enabled/
-sudo certbot --nginx -d bipolar.mandarinasoftware.uy
+sudo certbot --nginx -d bipolar.tumvp.uy
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
@@ -837,7 +837,7 @@ docker compose up -d
 25. ✅ **`docker compose up -d` levanta la app completa desde cero** incluyendo migraciones de DB al iniciar.
 26. ✅ El volumen `./data` persiste DB, audios y reportes entre reinicios del contenedor.
 27. ✅ El contenedor corre con timezone `America/Montevideo` verificable con `docker exec bipolar-app date`.
-28. ✅ **Nginx vhost dedicado** en `bipolar.mandarinasoftware.uy` hace proxy a `127.0.0.1:3000` y pasa el header `Host` correcto (necesario para validación de firma Twilio).
+28. ✅ **Nginx vhost dedicado** en `bipolar.tumvp.uy` hace proxy a `127.0.0.1:3010` y pasa el header `Host` correcto (necesario para validación de firma Twilio).
 29. ✅ TLS activo con Let's Encrypt; HTTP redirige a HTTPS.
 30. ✅ Healthcheck de Docker reporta `healthy` tras 30s de startup.
 31. ✅ Timezone siempre America/Montevideo en toda la UI y comparaciones.
@@ -866,7 +866,7 @@ docker compose up -d
 17. PWA (manifest + SW + prompt de instalación + offline queue).
 18. Rate limiting + validaciones Zod + logging + endpoint `/api/health`.
 19. **Dockerfile multi-stage + docker-compose.yml + .dockerignore** + `next.config.ts` con `output: 'standalone'`.
-20. **Nginx vhost dedicado** (`bipolar.mandarinasoftware.uy.conf`) + certbot + deployment docs.
+20. **Nginx vhost dedicado** (`bipolar.tumvp.uy.conf`) + certbot + deployment docs.
 21. Pruebas manuales contra checklist de sección 18 (incluyendo despliegue end-to-end en VPS).
 
 ---

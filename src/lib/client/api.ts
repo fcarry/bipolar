@@ -64,6 +64,14 @@ export interface MeUser {
   fullName: string;
   role: "admin" | "user";
   medicationTime: string | null;
+  medicationTimeMon: string | null;
+  medicationTimeTue: string | null;
+  medicationTimeWed: string | null;
+  medicationTimeThu: string | null;
+  medicationTimeFri: string | null;
+  medicationTimeSat: string | null;
+  medicationTimeSun: string | null;
+  monitoringEnabled: boolean;
   patientEmail: string | null;
   patientPhone: string | null;
   emergencyContactEmail: string | null;

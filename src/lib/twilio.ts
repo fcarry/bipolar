@@ -4,7 +4,7 @@ import { and, asc, eq, isNull, lte, ne } from "drizzle-orm";
 import twilioLib from "twilio";
 import { getDb } from "./db";
 import { alerts, callLogs, users, type User } from "./db/schema";
-import { addHours, addMinutes, isAfterNineAmUY, nextNineAmUY, nowUY, toIsoUY } from "./time";
+import { addHours, addMinutes, isAfterNineAmUY, medicationTimeForDay, nextNineAmUY, nowUY, todayKeyUY, toIsoUY } from "./time";
 
 const SID = process.env.TWILIO_ACCOUNT_SID;
 const TOKEN = process.env.TWILIO_AUTH_TOKEN;
@@ -240,6 +240,12 @@ export async function pollAndDispatch(): Promise<void> {
       await db.update(callLogs).set({ nextRetryAt: null }).where(eq(callLogs.id, cl.id));
       continue;
     }
+    const u = await db.query.users.findFirst({ where: eq(users.id, cl.userId) });
+    if (!u?.monitoringEnabled) {
+      await db.update(callLogs).set({ nextRetryAt: null }).where(eq(callLogs.id, cl.id));
+      await db.update(alerts).set({ nextRoundStartAt: null, callsExhausted: 1 }).where(eq(alerts.id, cl.alertId));
+      continue;
+    }
     await db.update(callLogs).set({ nextRetryAt: null }).where(eq(callLogs.id, cl.id));
     await initiateCall(cl.alertId, cl.userId, cl.attemptNumber + 1, cl.roundNumber);
   }
@@ -250,6 +256,11 @@ export async function pollAndDispatch(): Promise<void> {
     .where(and(lte(alerts.nextRoundStartAt, nowIso), eq(alerts.callsExhausted, 0), isNull(alerts.contactReached)));
   for (const a of dueRounds) {
     if (!a.nextRoundStartAt) continue;
+    const u = await db.query.users.findFirst({ where: eq(users.id, a.userId) });
+    if (!u?.monitoringEnabled) {
+      await db.update(alerts).set({ nextRoundStartAt: null, callsExhausted: 1 }).where(eq(alerts.id, a.id));
+      continue;
+    }
     const existing = await db
       .select()
       .from(callLogs)
@@ -272,7 +283,11 @@ export async function buildTwimlForCall(callLogId: string): Promise<string> {
   const contactEmail = u?.emergencyContactEmail ?? "su correo";
   if (a?.type === "wake_reminder") return twimlWakeReminder(fullName);
   if (a?.type === "medication_reminder") return twimlMedicationReminder(fullName);
-  if (a?.type === "medication_time_reminder") return twimlMedicationTimeReminder(fullName, u?.medicationTime ?? null);
+  if (a?.type === "medication_time_reminder") {
+    const today = todayKeyUY();
+    const t = u ? medicationTimeForDay(u, today) : null;
+    return twimlMedicationTimeReminder(fullName, t);
+  }
   if (a?.type === "short_sleep") return twimlShortSleep(fullName, contactEmail, cl.roundNumber);
   if (cl.roundNumber === 3) return twimlPatient(fullName);
   return twimlEmergency(fullName, contactEmail);

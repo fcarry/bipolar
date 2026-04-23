@@ -10,7 +10,8 @@ import { api, type MeUser } from "@/lib/client/api";
 interface TodayStatus {
   status: "pending" | "ontime" | "late" | "missed";
   log?: { takenAt: string; delayMinutes: number };
-  scheduledFor: string;
+  scheduledFor: string | null;
+  scheduledTime?: string | null;
 }
 
 interface TodayWake {
@@ -67,13 +68,8 @@ export function BigButton({ user }: { user: MeUser }) {
   }, []);
 
   function computeDelay(): number {
-    if (!user.medicationTime) return 0;
-    const now = new Date();
-    const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Montevideo" }).format(now);
-    const [hh, mm] = user.medicationTime.split(":").map(Number);
-    const localStr = `${dayKey}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00-03:00`;
-    const scheduled = new Date(localStr);
-    return Math.round((now.getTime() - scheduled.getTime()) / 60000);
+    if (!today?.scheduledFor) return 0;
+    return Math.round((Date.now() - new Date(today.scheduledFor).getTime()) / 60000);
   }
 
   async function commitMed(p?: { description: string; audio: Blob | null; takenAt: string | null }) {
@@ -172,8 +168,10 @@ export function BigButton({ user }: { user: MeUser }) {
     <div className="relative flex min-h-dvh flex-col items-center justify-center gap-8 px-6 py-10">
       <div className="text-center">
         <h1 className="text-2xl font-semibold">Hola, {user.fullName.split(" ")[0]}</h1>
-        {user.medicationTime && (
-          <p className="mt-1 text-sm text-muted-foreground">Tu horario: {user.medicationTime} hs</p>
+        {(today?.scheduledTime || user.medicationTime) && (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Tu horario de hoy: {today?.scheduledTime ?? user.medicationTime} hs
+          </p>
         )}
       </div>
 

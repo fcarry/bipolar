@@ -22,6 +22,7 @@ import {
   combineDayAndTimeUY,
   dayKeyUY,
   fmtDateTimeUY,
+  medicationTimeForDay,
   nowUY,
   todayKeyUY,
   toIsoUY,
@@ -83,9 +84,11 @@ export async function markMissedDays(): Promise<string[]> {
   const allUsers = await db.select().from(users).where(eq(users.role, "user"));
   const triggered: string[] = [];
   for (const u of allUsers) {
-    if (!u.medicationTime) continue;
+    if (!u.monitoringEnabled) continue;
     const today = todayKeyUY();
-    const scheduled = combineDayAndTimeUY(today, u.medicationTime);
+    const scheduledTime = medicationTimeForDay(u, today);
+    if (!scheduledTime) continue;
+    const scheduled = combineDayAndTimeUY(today, scheduledTime);
     const hoursSince = (nowUY().getTime() - scheduled.getTime()) / 3_600_000;
     if (hoursSince < 12) continue;
     const ds = await db.query.dailyStatus.findFirst({
@@ -111,8 +114,10 @@ export async function dailyRollup(): Promise<void> {
   const db = getDb();
   const allUsers = await db.select().from(users).where(eq(users.role, "user"));
   for (const u of allUsers) {
-    if (!u.medicationTime) continue;
+    if (!u.monitoringEnabled) continue;
     const today = todayKeyUY();
+    const scheduledTime = medicationTimeForDay(u, today);
+    if (!scheduledTime) continue;
     const ds = await db.query.dailyStatus.findFirst({
       where: and(eq(dailyStatus.userId, u.id), eq(dailyStatus.date, today)),
     });
@@ -131,13 +136,14 @@ export async function dailyRollup(): Promise<void> {
 }
 
 export async function evaluateAndDispatchAlert(userId: string): Promise<void> {
-  const days = await incidentDaysInWindow(userId);
-  if (days.length < ALERT_INCIDENT_THRESHOLD) return;
-  if (await hasRecentAlertOfType(userId, "medication")) return;
-
   const db = getDb();
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
   if (!user) return;
+  if (!user.monitoringEnabled) return;
+
+  const days = await incidentDaysInWindow(userId);
+  if (days.length < ALERT_INCIDENT_THRESHOLD) return;
+  if (await hasRecentAlertOfType(userId, "medication")) return;
 
   const reason = `${days.length} incidentes en últimos ${ALERT_WINDOW_DAYS} días: ${days.join(", ")}`;
   const triggeredAt = toIsoUY(nowUY());
@@ -258,13 +264,14 @@ export async function evaluateAndDispatchAlert(userId: string): Promise<void> {
 
 /** 3-in-7 short-sleep rule: dispatches full alert pipeline (email + Twilio escalation). */
 export async function evaluateAndDispatchShortSleepAlert(userId: string): Promise<void> {
-  const days = await shortSleepDaysInWindow(userId);
-  if (days.length < ALERT_INCIDENT_THRESHOLD) return;
-  if (await hasRecentAlertOfType(userId, "short_sleep")) return;
-
   const db = getDb();
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
   if (!user) return;
+  if (!user.monitoringEnabled) return;
+
+  const days = await shortSleepDaysInWindow(userId);
+  if (days.length < ALERT_INCIDENT_THRESHOLD) return;
+  if (await hasRecentAlertOfType(userId, "short_sleep")) return;
 
   const reason = `${days.length} días con sueño < 5h en últimos ${ALERT_WINDOW_DAYS} días: ${days.join(", ")}`;
   const triggeredAt = toIsoUY(nowUY());
@@ -390,6 +397,7 @@ export async function evaluateAndDispatchWakeReminder(userId: string): Promise<v
   const db = getDb();
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
   if (!user || user.role !== "user" || !user.patientPhone) return;
+  if (!user.monitoringEnabled) return;
 
   const lastMed = await db
     .select()
@@ -531,13 +539,23 @@ const MEDICATION_REMINDER_HOURS = 11;
 export async function evaluateAndDispatchMedicationReminder(userId: string): Promise<void> {
   const db = getDb();
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  if (!user || user.role !== "user" || !user.patientPhone || !user.medicationTime) return;
+  if (!user || user.role !== "user" || !user.patientPhone) return;
+  if (!user.monitoringEnabled) return;
 
   // Determine the most recent scheduled slot (today's, or yesterday's if today's is still in the future).
   const today = todayKeyUY();
-  let scheduled = combineDayAndTimeUY(today, user.medicationTime);
+  const todayTime = medicationTimeForDay(user, today);
+  if (!todayTime) return;
+  let scheduledTimeUsed = todayTime;
+  let scheduledDayUsed = today;
+  let scheduled = combineDayAndTimeUY(today, todayTime);
   if (scheduled.getTime() > nowUY().getTime()) {
-    scheduled = combineDayAndTimeUY(addDaysUY(today, -1), user.medicationTime);
+    const y = addDaysUY(today, -1);
+    const yTime = medicationTimeForDay(user, y);
+    if (!yTime) return;
+    scheduledTimeUsed = yTime;
+    scheduledDayUsed = y;
+    scheduled = combineDayAndTimeUY(y, yTime);
   }
   const hoursSince = (nowUY().getTime() - scheduled.getTime()) / 3_600_000;
   if (hoursSince < MEDICATION_REMINDER_HOURS) return;
@@ -566,7 +584,7 @@ export async function evaluateAndDispatchMedicationReminder(userId: string): Pro
 
   const triggeredAt = toIsoUY(nowUY());
   const alertId = uuid();
-  const reason = `Sin toma registrada ${hoursSince.toFixed(1)}h después del horario programado (${user.medicationTime})`;
+  const reason = `Sin toma registrada ${hoursSince.toFixed(1)}h después del horario programado (${scheduledTimeUsed})`;
   await db.insert(alerts).values({
     id: alertId,
     userId: user.id,
@@ -614,10 +632,13 @@ const MEDICATION_TIME_WINDOW_MIN = 2;
 export async function evaluateAndDispatchMedicationTimeReminder(userId: string): Promise<void> {
   const db = getDb();
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  if (!user || user.role !== "user" || !user.patientPhone || !user.medicationTime) return;
+  if (!user || user.role !== "user" || !user.patientPhone) return;
+  if (!user.monitoringEnabled) return;
 
   const today = todayKeyUY();
-  const scheduled = combineDayAndTimeUY(today, user.medicationTime);
+  const todayTime = medicationTimeForDay(user, today);
+  if (!todayTime) return;
+  const scheduled = combineDayAndTimeUY(today, todayTime);
   const diffMin = Math.abs(nowUY().getTime() - scheduled.getTime()) / 60_000;
   if (diffMin > MEDICATION_TIME_WINDOW_MIN) return;
   if (nowUY().getTime() < scheduled.getTime() - 30_000) return; // only at or after the hour
@@ -645,7 +666,7 @@ export async function evaluateAndDispatchMedicationTimeReminder(userId: string):
 
   const triggeredAt = toIsoUY(nowUY());
   const alertId = uuid();
-  const reason = `Recordatorio de horario programado (${user.medicationTime})`;
+  const reason = `Recordatorio de horario programado (${todayTime})`;
   await db.insert(alerts).values({
     id: alertId,
     userId: user.id,

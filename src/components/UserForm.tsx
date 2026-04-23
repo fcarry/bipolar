@@ -11,11 +11,29 @@ export interface UserFormValues {
   password?: string;
   fullName: string;
   medicationTime: string;
+  medicationTimeMon?: string;
+  medicationTimeTue?: string;
+  medicationTimeWed?: string;
+  medicationTimeThu?: string;
+  medicationTimeFri?: string;
+  medicationTimeSat?: string;
+  medicationTimeSun?: string;
+  monitoringEnabled?: boolean;
   patientEmail: string;
   patientPhone: string;
   emergencyContactEmail: string;
   emergencyContactPhone: string;
 }
+
+const DOW_FIELDS: { key: keyof UserFormValues; label: string }[] = [
+  { key: "medicationTimeMon", label: "Lunes" },
+  { key: "medicationTimeTue", label: "Martes" },
+  { key: "medicationTimeWed", label: "Miércoles" },
+  { key: "medicationTimeThu", label: "Jueves" },
+  { key: "medicationTimeFri", label: "Viernes" },
+  { key: "medicationTimeSat", label: "Sábado" },
+  { key: "medicationTimeSun", label: "Domingo" },
+];
 
 export function UserForm({
   initial,
@@ -32,7 +50,22 @@ export function UserForm({
   const [loading, setLoading] = useState(false);
 
   function set<K extends keyof UserFormValues>(k: K, val: UserFormValues[K]) {
-    setV({ ...v, [k]: val });
+    setV((prev) => ({ ...prev, [k]: val }));
+  }
+
+  function copyReferenceToAll() {
+    const ref = v.medicationTime;
+    if (!ref) return;
+    setV((prev) => ({
+      ...prev,
+      medicationTimeMon: ref,
+      medicationTimeTue: ref,
+      medicationTimeWed: ref,
+      medicationTimeThu: ref,
+      medicationTimeFri: ref,
+      medicationTimeSat: ref,
+      medicationTimeSun: ref,
+    }));
   }
 
   async function submit(e: React.FormEvent) {
@@ -42,6 +75,11 @@ export function UserForm({
     try {
       const body: UserFormValues = { ...v };
       if (mode === "edit" && !body.password) delete body.password;
+      // If any per-day field is empty, fall back to the reference time so the backend never sees invalid data.
+      for (const f of DOW_FIELDS) {
+        const key = f.key as keyof UserFormValues;
+        if (!body[key]) (body as Record<string, unknown>)[key] = body.medicationTime;
+      }
       if (mode === "create") {
         await api("/api/admin/users", { method: "POST", json: body });
       } else {
@@ -76,16 +114,66 @@ export function UserForm({
         <Label>Nombre completo</Label>
         <Input value={v.fullName} onChange={(e) => set("fullName", e.target.value)} required />
       </div>
-      <div>
-        <Label>Hora de medicación</Label>
-        <Input
-          type="time"
-          value={v.medicationTime}
-          onChange={(e) => set("medicationTime", e.target.value)}
-          required
-        />
-      </div>
-      <div></div>
+
+      <fieldset className="md:col-span-2 mt-2 rounded-md border border-muted p-4">
+        <legend className="px-2 text-sm font-medium">Horario de medicación por día</legend>
+        <div className="grid gap-3 md:grid-cols-3 items-end">
+          <div>
+            <Label>Horario de referencia</Label>
+            <Input
+              type="time"
+              value={v.medicationTime}
+              onChange={(e) => set("medicationTime", e.target.value)}
+              required
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Se usa como fallback si algún día queda vacío.
+            </p>
+          </div>
+          <div className="md:col-span-2 flex items-end">
+            <Button type="button" variant="secondary" onClick={copyReferenceToAll}>
+              Copiar a todos los días
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3 lg:grid-cols-4">
+          {DOW_FIELDS.map((f) => (
+            <div key={f.key as string}>
+              <Label>{f.label}</Label>
+              <Input
+                type="time"
+                value={(v[f.key] as string | undefined) ?? ""}
+                onChange={(e) => set(f.key as keyof UserFormValues, e.target.value as never)}
+              />
+            </div>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset className="md:col-span-2 rounded-md border border-muted p-4">
+        <legend className="px-2 text-sm font-medium">Control de monitoreo</legend>
+        <label className="flex items-center gap-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="h-5 w-5"
+            checked={v.monitoringEnabled ?? true}
+            onChange={(e) => set("monitoringEnabled", e.target.checked)}
+          />
+          <span className="text-sm">
+            Control activo {(v.monitoringEnabled ?? true) ? (
+              <span className="ml-2 inline-block rounded bg-green-100 text-green-800 px-2 py-0.5 text-xs font-medium">ACTIVADO</span>
+            ) : (
+              <span className="ml-2 inline-block rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs font-medium">PAUSADO</span>
+            )}
+          </span>
+        </label>
+        <p className="text-xs text-muted-foreground mt-2">
+          Si está pausado no se evalúan incidentes, no se generan alertas, no se envían emails ni se
+          realizan llamadas automáticas. Útil durante licencias reglamentarias, internaciones u otras
+          situaciones donde el seguimiento automatizado debe suspenderse.
+        </p>
+      </fieldset>
 
       <fieldset className="md:col-span-2 mt-2 rounded-md border border-muted p-4">
         <legend className="px-2 text-sm font-medium">Datos del paciente</legend>

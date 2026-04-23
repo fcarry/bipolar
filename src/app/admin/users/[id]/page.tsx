@@ -13,19 +13,28 @@ export default function EditUserPage({ params }: { params: Promise<{ id: string 
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ user: UserFormValues & { id: string } }>(`/api/admin/users/${id}`)
-      .then((r) =>
+    api<{ user: UserFormValues & { id: string; monitoringEnabled?: boolean } }>(`/api/admin/users/${id}`)
+      .then((r) => {
+        const ref = r.user.medicationTime || "21:00";
         setInitial({
           username: r.user.username,
           password: "",
           fullName: r.user.fullName,
-          medicationTime: r.user.medicationTime || "21:00",
+          medicationTime: ref,
+          medicationTimeMon: r.user.medicationTimeMon || ref,
+          medicationTimeTue: r.user.medicationTimeTue || ref,
+          medicationTimeWed: r.user.medicationTimeWed || ref,
+          medicationTimeThu: r.user.medicationTimeThu || ref,
+          medicationTimeFri: r.user.medicationTimeFri || ref,
+          medicationTimeSat: r.user.medicationTimeSat || ref,
+          medicationTimeSun: r.user.medicationTimeSun || ref,
+          monitoringEnabled: r.user.monitoringEnabled ?? true,
           patientEmail: r.user.patientEmail || "",
           patientPhone: r.user.patientPhone || "",
           emergencyContactEmail: r.user.emergencyContactEmail || "",
           emergencyContactPhone: r.user.emergencyContactPhone || "",
-        }),
-      )
+        });
+      })
       .catch((e) => setError(e instanceof Error ? e.message : "Error"));
   }, [id]);
 

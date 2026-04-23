@@ -38,6 +38,13 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       "username",
       "fullName",
       "medicationTime",
+      "medicationTimeMon",
+      "medicationTimeTue",
+      "medicationTimeWed",
+      "medicationTimeThu",
+      "medicationTimeFri",
+      "medicationTimeSat",
+      "medicationTimeSun",
       "patientEmail",
       "patientPhone",
       "emergencyContactEmail",
@@ -45,6 +52,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     ] as const) {
       if (data[k] !== undefined) update[k] = data[k];
     }
+    if (data.monitoringEnabled !== undefined) update.monitoringEnabled = data.monitoringEnabled ? 1 : 0;
     if (data.password) update.passwordHash = await bcrypt.hash(data.password, 12);
 
     await db.update(users).set(update).where(eq(users.id, id));

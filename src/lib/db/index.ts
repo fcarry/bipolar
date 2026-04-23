@@ -41,6 +41,14 @@ export function initSchema() {
       fullName TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin','user')),
       medicationTime TEXT,
+      medicationTimeMon TEXT,
+      medicationTimeTue TEXT,
+      medicationTimeWed TEXT,
+      medicationTimeThu TEXT,
+      medicationTimeFri TEXT,
+      medicationTimeSat TEXT,
+      medicationTimeSun TEXT,
+      monitoringEnabled INTEGER NOT NULL DEFAULT 1,
       patientEmail TEXT,
       patientPhone TEXT,
       emergencyContactEmail TEXT,
@@ -160,6 +168,44 @@ export function initSchema() {
   if (!alertsCols.some((c) => c.name === "type")) {
     s.exec(`ALTER TABLE alerts ADD COLUMN type TEXT NOT NULL DEFAULT 'medication';`);
     console.log("[db] migrated: added alerts.type column");
+  }
+
+  // Backfill: add per-day medication time columns + monitoringEnabled if upgrading.
+  const usersCols = s.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+  const usersColNames = new Set(usersCols.map((c) => c.name));
+  const perDayCols = [
+    "medicationTimeMon",
+    "medicationTimeTue",
+    "medicationTimeWed",
+    "medicationTimeThu",
+    "medicationTimeFri",
+    "medicationTimeSat",
+    "medicationTimeSun",
+  ];
+  let addedAnyPerDay = false;
+  for (const col of perDayCols) {
+    if (!usersColNames.has(col)) {
+      s.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT;`);
+      addedAnyPerDay = true;
+    }
+  }
+  if (addedAnyPerDay) {
+    // Seed every per-day column with the legacy medicationTime value so existing users keep working.
+    s.exec(`UPDATE users SET
+      medicationTimeMon = COALESCE(medicationTimeMon, medicationTime),
+      medicationTimeTue = COALESCE(medicationTimeTue, medicationTime),
+      medicationTimeWed = COALESCE(medicationTimeWed, medicationTime),
+      medicationTimeThu = COALESCE(medicationTimeThu, medicationTime),
+      medicationTimeFri = COALESCE(medicationTimeFri, medicationTime),
+      medicationTimeSat = COALESCE(medicationTimeSat, medicationTime),
+      medicationTimeSun = COALESCE(medicationTimeSun, medicationTime)
+      WHERE role='user' AND medicationTime IS NOT NULL;`);
+    console.log("[db] migrated: added per-day medicationTime columns and backfilled from medicationTime");
+  }
+
+  if (!usersColNames.has("monitoringEnabled")) {
+    s.exec(`ALTER TABLE users ADD COLUMN monitoringEnabled INTEGER NOT NULL DEFAULT 1;`);
+    console.log("[db] migrated: added users.monitoringEnabled column");
   }
 }
 

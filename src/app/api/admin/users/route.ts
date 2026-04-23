@@ -32,6 +32,15 @@ export async function POST(req: NextRequest) {
     if (exists) throw new ApiError(409, "USERNAME_TAKEN", "Usuario ya existe");
     const now = toIsoUY(nowUY());
     const id = uuid();
+    const perDay = {
+      medicationTimeMon: data.medicationTimeMon ?? data.medicationTime,
+      medicationTimeTue: data.medicationTimeTue ?? data.medicationTime,
+      medicationTimeWed: data.medicationTimeWed ?? data.medicationTime,
+      medicationTimeThu: data.medicationTimeThu ?? data.medicationTime,
+      medicationTimeFri: data.medicationTimeFri ?? data.medicationTime,
+      medicationTimeSat: data.medicationTimeSat ?? data.medicationTime,
+      medicationTimeSun: data.medicationTimeSun ?? data.medicationTime,
+    };
     await db.insert(users).values({
       id,
       username: data.username,
@@ -39,6 +48,8 @@ export async function POST(req: NextRequest) {
       fullName: data.fullName,
       role: "user",
       medicationTime: data.medicationTime,
+      ...perDay,
+      monitoringEnabled: (data.monitoringEnabled ?? true) ? 1 : 0,
       patientEmail: data.patientEmail,
       patientPhone: data.patientPhone,
       emergencyContactEmail: data.emergencyContactEmail,

@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db";
 import { medicationLogs, dailyStatus, users } from "@/lib/db/schema";
 import { ApiError, apiErrorResponse, requireUser } from "@/lib/auth";
 import { chartQuerySchema } from "@/lib/validation";
-import { addDaysUY, dayKeyUY, hourOfDayUY, todayKeyUY } from "@/lib/time";
+import { addDaysUY, dayKeyUY, hourOfDayUY, medicationTimeForDay, todayKeyUY } from "@/lib/time";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +13,8 @@ interface Point {
   date: string;
   hour: number | null;
   status: "ontime" | "late" | "missed" | "pending";
+  scheduledTime: string | null;
+  scheduledHour: number | null;
 }
 
 export async function GET(req: NextRequest) {
@@ -21,16 +23,15 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const { days } = chartQuerySchema.parse(Object.fromEntries(url.searchParams));
     const targetUserId = url.searchParams.get("userId");
-    let scopedUserId = user.id;
-    let scopedMedicationTime: string | null = user.medicationTime;
+    let scopedUser = user;
     if (targetUserId && targetUserId !== user.id) {
       if (user.role !== "admin") throw new ApiError(403, "FORBIDDEN", "Admin only");
       const db = getDb();
       const tgt = await db.query.users.findFirst({ where: eq(users.id, targetUserId) });
       if (!tgt) throw new ApiError(404, "NOT_FOUND", "User not found");
-      scopedUserId = tgt.id;
-      scopedMedicationTime = tgt.medicationTime;
+      scopedUser = tgt;
     }
+    const scopedUserId = scopedUser.id;
 
     const today = todayKeyUY();
     const fromKey = addDaysUY(today, -(days - 1));
@@ -59,12 +60,26 @@ export async function GET(req: NextRequest) {
       const ds = dsByDay.get(d);
       const status = ds?.status ?? (log ? (log.isLate ? "late" : "ontime") : "pending");
       const hour = log ? hourOfDayUY(log.takenAt) : null;
-      points.push({ date: d, hour, status });
+      const scheduledTime = medicationTimeForDay(scopedUser, d);
+      const scheduledHour = scheduledTime
+        ? Number(scheduledTime.slice(0, 2)) + Number(scheduledTime.slice(3, 5)) / 60
+        : null;
+      points.push({ date: d, hour, status, scheduledTime, scheduledHour });
     }
 
     return Response.json({
       points,
-      medicationTime: scopedMedicationTime,
+      // Legacy field kept for backwards compatibility; prefer `scheduledTime` per point.
+      medicationTime: scopedUser.medicationTime ?? null,
+      schedule: {
+        mon: scopedUser.medicationTimeMon ?? null,
+        tue: scopedUser.medicationTimeTue ?? null,
+        wed: scopedUser.medicationTimeWed ?? null,
+        thu: scopedUser.medicationTimeThu ?? null,
+        fri: scopedUser.medicationTimeFri ?? null,
+        sat: scopedUser.medicationTimeSat ?? null,
+        sun: scopedUser.medicationTimeSun ?? null,
+      },
     });
   } catch (err) {
     return apiErrorResponse(err);

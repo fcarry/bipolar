@@ -2,7 +2,7 @@ import "server-only";
 import path from "node:path";
 import fs from "node:fs/promises";
 import ExcelJS from "exceljs";
-import { addDaysUY, dayKeyUY, fmtDateUY, fmtTimeUY, todayKeyUY } from "./time";
+import { addDaysUY, dayKeyUY, fmtDateUY, fmtTimeUY, medicationTimeForDay, todayKeyUY } from "./time";
 import type { MedicationLog, User, WakeLog } from "./db/schema";
 
 const DATA_DIR = process.env.BIPOLAR_DATA_DIR || "/app/data";
@@ -69,7 +69,7 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
     const row = s1.addRow({
       date: fmtDateUY(`${d}T12:00:00-03:00`),
       weekday: new Date(`${d}T12:00:00-03:00`).toLocaleDateString("es-UY", { weekday: "short", timeZone: "America/Montevideo" }),
-      scheduled: input.user.medicationTime ?? "—",
+      scheduled: medicationTimeForDay(input.user, d) ?? "—",
       real: log ? fmtTimeUY(log.takenAt) : "—",
       delay: log ? log.delayMinutes : "—",
       status: ds === "ontime" ? "A tiempo" : ds === "late" ? "Tarde" : "FALTÓ",
@@ -152,7 +152,22 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
   const s3 = wb.addWorksheet("Resumen");
   s3.addRow(["Paciente", input.user.fullName]);
   s3.addRow(["Usuario", input.user.username]);
-  s3.addRow(["Hora programada", input.user.medicationTime ?? "—"]);
+  const scheduleLabelParts: string[] = [];
+  const dowPairs: [string, string | null | undefined][] = [
+    ["Lun", input.user.medicationTimeMon],
+    ["Mar", input.user.medicationTimeTue],
+    ["Mié", input.user.medicationTimeWed],
+    ["Jue", input.user.medicationTimeThu],
+    ["Vie", input.user.medicationTimeFri],
+    ["Sáb", input.user.medicationTimeSat],
+    ["Dom", input.user.medicationTimeSun],
+  ];
+  for (const [lbl, t] of dowPairs) scheduleLabelParts.push(`${lbl} ${t ?? "—"}`);
+  const allSame = dowPairs.every(([, t]) => t === dowPairs[0][1]);
+  const scheduleLabel = allSame
+    ? (dowPairs[0][1] ?? input.user.medicationTime ?? "—")
+    : scheduleLabelParts.join(" · ");
+  s3.addRow(["Hora programada", scheduleLabel]);
   s3.addRow([]);
   const total = totalOntime + totalLate + totalMissed;
   s3.addRow(["Medicación — Total días evaluados", total]);

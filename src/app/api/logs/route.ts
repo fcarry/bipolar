@@ -11,6 +11,7 @@ import {
   combineDayAndTimeUY,
   dayKeyUY,
   diffMinutes,
+  medicationTimeForDay,
   nowUY,
   toIsoUY,
   fmtTimeUY,
@@ -44,7 +45,6 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
     if (user.role !== "user") throw new ApiError(403, "FORBIDDEN", "Only patients log medication");
-    if (!user.medicationTime) throw new ApiError(400, "NO_SCHEDULE", "User has no medicationTime configured");
 
     const form = await req.formData();
     const description = (form.get("description") as string | null)?.trim() || null;
@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
 
     const takenAt = parseTakenAt(takenAtRaw);
     const dayKey = dayKeyUY(takenAt);
-    const scheduled = combineDayAndTimeUY(dayKey, user.medicationTime);
+    const scheduledTime = medicationTimeForDay(user, dayKey);
+    if (!scheduledTime) throw new ApiError(400, "NO_SCHEDULE", "User has no medication time configured for this day");
+    const scheduled = combineDayAndTimeUY(dayKey, scheduledTime);
     const delay = diffMinutes(takenAt, scheduled);
     const isLate = delay > LATE_THRESHOLD_MIN ? 1 : 0;
 

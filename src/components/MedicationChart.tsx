@@ -26,17 +26,19 @@ const COLORS = {
   pending: "#6b7280",
 };
 
-export function MedicationChart() {
+export function MedicationChart({ userId }: { userId?: string } = {}) {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Point[]>([]);
   const [medTime, setMedTime] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ points: Point[]; medicationTime: string | null }>(`/api/logs/chart?days=${days}`).then((r) => {
+    const q = new URLSearchParams({ days: String(days) });
+    if (userId) q.set("userId", userId);
+    api<{ points: Point[]; medicationTime: string | null }>(`/api/logs/chart?${q}`).then((r) => {
       setData(r.points);
       setMedTime(r.medicationTime);
     });
-  }, [days]);
+  }, [days, userId]);
 
   const refHour = medTime ? Number(medTime.split(":")[0]) + Number(medTime.split(":")[1]) / 60 : null;
 

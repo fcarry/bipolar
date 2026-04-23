@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, LineChart } from "lucide-react";
 import { api } from "@/lib/client/api";
 import { Button } from "@/components/ui/Button";
 
@@ -82,12 +82,17 @@ export default function AdminUsersPage() {
                 <td className="px-3 py-2 text-center font-mono text-xs">{u.emergencyContactPhone ?? "—"}</td>
                 <td className="px-3 py-2 text-right">
                   <div className="flex justify-end gap-2">
-                    <Link href={`/admin/users/${u.id}`}>
+                    <Link href={`/admin/users/${u.id}/history`} title="Ver historial">
+                      <Button variant="ghost" size="sm">
+                        <LineChart size={16} />
+                      </Button>
+                    </Link>
+                    <Link href={`/admin/users/${u.id}`} title="Editar">
                       <Button variant="ghost" size="sm">
                         <Pencil size={16} />
                       </Button>
                     </Link>
-                    <Button variant="ghost" size="sm" onClick={() => remove(u.id, u.fullName)}>
+                    <Button variant="ghost" size="sm" onClick={() => remove(u.id, u.fullName)} title="Eliminar">
                       <Trash2 size={16} />
                     </Button>
                   </div>

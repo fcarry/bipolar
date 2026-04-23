@@ -141,9 +141,15 @@ export async function GET(req: NextRequest) {
     const user = await requireUser(req);
     const url = new URL(req.url);
     const params = logsQuerySchema.parse(Object.fromEntries(url.searchParams));
+    const targetUserId = url.searchParams.get("userId");
+    let scopedUserId = user.id;
+    if (targetUserId && targetUserId !== user.id) {
+      if (user.role !== "admin") throw new ApiError(403, "FORBIDDEN", "Admin only");
+      scopedUserId = targetUserId;
+    }
 
     const db = getDb();
-    const conds = [eq(medicationLogs.userId, user.id)];
+    const conds = [eq(medicationLogs.userId, scopedUserId)];
     if (params.from) conds.push(gte(medicationLogs.takenAt, `${params.from}T00:00:00-03:00`));
     if (params.to) conds.push(lte(medicationLogs.takenAt, `${params.to}T23:59:59-03:00`));
 

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { and, eq, gte } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { dailyWakeStatus, wakeLogs } from "@/lib/db/schema";
-import { apiErrorResponse, requireUser } from "@/lib/auth";
+import { ApiError, apiErrorResponse, requireUser } from "@/lib/auth";
 import { wakeChartQuerySchema } from "@/lib/validation";
 import { addDaysUY, dayKeyUY, todayKeyUY } from "@/lib/time";
 
@@ -18,7 +18,14 @@ interface Point {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
-    const { days } = wakeChartQuerySchema.parse(Object.fromEntries(new URL(req.url).searchParams));
+    const url = new URL(req.url);
+    const { days } = wakeChartQuerySchema.parse(Object.fromEntries(url.searchParams));
+    const targetUserId = url.searchParams.get("userId");
+    let scopedUserId = user.id;
+    if (targetUserId && targetUserId !== user.id) {
+      if (user.role !== "admin") throw new ApiError(403, "FORBIDDEN", "Admin only");
+      scopedUserId = targetUserId;
+    }
 
     const today = todayKeyUY();
     const fromKey = addDaysUY(today, -(days - 1));
@@ -29,11 +36,11 @@ export async function GET(req: NextRequest) {
       db
         .select()
         .from(wakeLogs)
-        .where(and(eq(wakeLogs.userId, user.id), gte(wakeLogs.wokeAt, fromIso))),
+        .where(and(eq(wakeLogs.userId, scopedUserId), gte(wakeLogs.wokeAt, fromIso))),
       db
         .select()
         .from(dailyWakeStatus)
-        .where(and(eq(dailyWakeStatus.userId, user.id), gte(dailyWakeStatus.date, fromKey))),
+        .where(and(eq(dailyWakeStatus.userId, scopedUserId), gte(dailyWakeStatus.date, fromKey))),
     ]);
 
     const logByDay = new Map<string, (typeof logs)[number]>();

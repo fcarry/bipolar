@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { and, eq, gte } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { medicationLogs, dailyStatus } from "@/lib/db/schema";
-import { apiErrorResponse, requireUser } from "@/lib/auth";
+import { medicationLogs, dailyStatus, users } from "@/lib/db/schema";
+import { ApiError, apiErrorResponse, requireUser } from "@/lib/auth";
 import { chartQuerySchema } from "@/lib/validation";
 import { addDaysUY, dayKeyUY, hourOfDayUY, todayKeyUY } from "@/lib/time";
 
@@ -18,7 +18,19 @@ interface Point {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
-    const { days } = chartQuerySchema.parse(Object.fromEntries(new URL(req.url).searchParams));
+    const url = new URL(req.url);
+    const { days } = chartQuerySchema.parse(Object.fromEntries(url.searchParams));
+    const targetUserId = url.searchParams.get("userId");
+    let scopedUserId = user.id;
+    let scopedMedicationTime: string | null = user.medicationTime;
+    if (targetUserId && targetUserId !== user.id) {
+      if (user.role !== "admin") throw new ApiError(403, "FORBIDDEN", "Admin only");
+      const db = getDb();
+      const tgt = await db.query.users.findFirst({ where: eq(users.id, targetUserId) });
+      if (!tgt) throw new ApiError(404, "NOT_FOUND", "User not found");
+      scopedUserId = tgt.id;
+      scopedMedicationTime = tgt.medicationTime;
+    }
 
     const today = todayKeyUY();
     const fromKey = addDaysUY(today, -(days - 1));
@@ -29,11 +41,11 @@ export async function GET(req: NextRequest) {
       db
         .select()
         .from(medicationLogs)
-        .where(and(eq(medicationLogs.userId, user.id), gte(medicationLogs.takenAt, fromIso))),
+        .where(and(eq(medicationLogs.userId, scopedUserId), gte(medicationLogs.takenAt, fromIso))),
       db
         .select()
         .from(dailyStatus)
-        .where(and(eq(dailyStatus.userId, user.id), gte(dailyStatus.date, fromKey))),
+        .where(and(eq(dailyStatus.userId, scopedUserId), gte(dailyStatus.date, fromKey))),
     ]);
 
     const logByDay = new Map<string, (typeof logs)[number]>();
@@ -52,7 +64,7 @@ export async function GET(req: NextRequest) {
 
     return Response.json({
       points,
-      medicationTime: user.medicationTime,
+      medicationTime: scopedMedicationTime,
     });
   } catch (err) {
     return apiErrorResponse(err);

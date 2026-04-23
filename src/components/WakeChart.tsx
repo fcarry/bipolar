@@ -27,17 +27,19 @@ const COLORS = {
   pending: "#4b5563",
 };
 
-export function WakeChart() {
+export function WakeChart({ userId }: { userId?: string } = {}) {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Point[]>([]);
   const [threshold, setThreshold] = useState<number>(5);
 
   useEffect(() => {
-    api<{ points: Point[]; threshold: number }>(`/api/wakes/chart?days=${days}`).then((r) => {
+    const q = new URLSearchParams({ days: String(days) });
+    if (userId) q.set("userId", userId);
+    api<{ points: Point[]; threshold: number }>(`/api/wakes/chart?${q}`).then((r) => {
       setData(r.points);
       setThreshold(r.threshold);
     });
-  }, [days]);
+  }, [days, userId]);
 
   const chartData = data.map((p) => ({
     date: p.date.slice(5),

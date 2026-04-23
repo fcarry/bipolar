@@ -151,9 +151,15 @@ export async function GET(req: NextRequest) {
     const user = await requireUser(req);
     const url = new URL(req.url);
     const params = wakesQuerySchema.parse(Object.fromEntries(url.searchParams));
+    const targetUserId = url.searchParams.get("userId");
+    let scopedUserId = user.id;
+    if (targetUserId && targetUserId !== user.id) {
+      if (user.role !== "admin") throw new ApiError(403, "FORBIDDEN", "Admin only");
+      scopedUserId = targetUserId;
+    }
 
     const db = getDb();
-    const conds = [eq(wakeLogs.userId, user.id)];
+    const conds = [eq(wakeLogs.userId, scopedUserId)];
     if (params.from) conds.push(gte(wakeLogs.wokeAt, `${params.from}T00:00:00-03:00`));
     if (params.to) conds.push(lte(wakeLogs.wokeAt, `${params.to}T23:59:59-03:00`));
 

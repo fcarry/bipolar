@@ -28,7 +28,7 @@ function fmtDate(iso: string) {
   }).format(new Date(iso));
 }
 
-export function WakeHistoryTable() {
+export function WakeHistoryTable({ userId }: { userId?: string } = {}) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
@@ -47,6 +47,7 @@ export function WakeHistoryTable() {
       q.set("order", order);
       q.set("page", String(page));
       q.set("pageSize", String(pageSize));
+      if (userId) q.set("userId", userId);
       const res = await api<{ logs: WakeRow[]; total: number }>(`/api/wakes?${q}`);
       setData(res);
     } finally {

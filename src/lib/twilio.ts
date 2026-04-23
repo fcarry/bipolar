@@ -167,7 +167,7 @@ export async function onCallTerminal(alertId: string, callLogId: string): Promis
     !(cl.answeredBy?.startsWith("machine_") ?? false);
 
   // Wake reminder: single-shot. Success → contactReached; failure → callsExhausted. No retries.
-  if (a.type === "wake_reminder" || a.type === "medication_reminder") {
+  if (a.type === "wake_reminder" || a.type === "medication_reminder" || a.type === "medication_time_reminder") {
     if (success) {
       await db
         .update(alerts)
@@ -257,7 +257,7 @@ export async function pollAndDispatch(): Promise<void> {
       .orderBy(asc(callLogs.roundNumber));
     const lastRound = existing.length === 0 ? 0 : Math.max(...existing.map((c) => c.roundNumber));
     // Wake reminder is always a single patient call (round 3).
-    const nextRound = (a.type === "wake_reminder" || a.type === "medication_reminder") ? 3 : Math.min(3, lastRound + 1);
+    const nextRound = (a.type === "wake_reminder" || a.type === "medication_reminder" || a.type === "medication_time_reminder") ? 3 : Math.min(3, lastRound + 1);
     await initiateCall(a.id, a.userId, 1, nextRound);
   }
 }
@@ -272,6 +272,7 @@ export async function buildTwimlForCall(callLogId: string): Promise<string> {
   const contactEmail = u?.emergencyContactEmail ?? "su correo";
   if (a?.type === "wake_reminder") return twimlWakeReminder(fullName);
   if (a?.type === "medication_reminder") return twimlMedicationReminder(fullName);
+  if (a?.type === "medication_time_reminder") return twimlMedicationTimeReminder(fullName, u?.medicationTime ?? null);
   if (a?.type === "short_sleep") return twimlShortSleep(fullName, contactEmail, cl.roundNumber);
   if (cl.roundNumber === 3) return twimlPatient(fullName);
   return twimlEmergency(fullName, contactEmail);
@@ -339,6 +340,20 @@ function twimlMedicationReminder(fullName: string): string {
 </Response>`;
 }
 
+function twimlMedicationTimeReminder(fullName: string, medicationTime: string | null): string {
+  const hourPhrase = medicationTime ? ` a las ${escapeXml(medicationTime)} horas` : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Hola ${escapeXml(fullName)}. Llegó el horario${hourPhrase} para tomar tu medicación.</Say>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Si la podés tomar ahora, hacelo y después abrí la aplicación para registrar la toma.</Say>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Si hoy tenés una actividad y la vas a tomar más tarde, abrí la aplicación y marcá voy a tomar más tarde para que no te llamemos de nuevo hoy.</Say>
+  <Pause length="1"/>
+</Response>`;
+}
+
 function twimlPatient(fullName: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -396,7 +411,7 @@ export async function manualRetry(alertId: string): Promise<void> {
   const existing = await db.select().from(callLogs).where(eq(callLogs.alertId, a.id));
   const lastRound = existing.length === 0 ? 1 : Math.max(...existing.map((c) => c.roundNumber));
   await db.update(alerts).set({ callsExhausted: 0, nextRoundStartAt: null }).where(eq(alerts.id, a.id));
-  const round = (a.type === "wake_reminder" || a.type === "medication_reminder") ? 3 : Math.min(3, lastRound);
+  const round = (a.type === "wake_reminder" || a.type === "medication_reminder" || a.type === "medication_time_reminder") ? 3 : Math.min(3, lastRound);
   await initiateCall(alertId, a.userId, 1, round);
 }
 
@@ -410,5 +425,11 @@ export async function scheduleMedicationReminderCall(alertId: string, user: User
     console.log(`[twilio] medication-reminder ${alertId} deferred to ${toIsoUY(startAt)} (9 AM UY rule)`);
     return;
   }
+  await initiateCall(alertId, user.id, 1, 3);
+}
+
+
+/** Call at the exact medication scheduled time — single shot patient call, no retry, no 9 AM gate. */
+export async function scheduleMedicationTimeReminderCall(alertId: string, user: User): Promise<void> {
   await initiateCall(alertId, user.id, 1, 3);
 }

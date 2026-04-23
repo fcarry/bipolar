@@ -9,6 +9,7 @@ import {
   dailyStatus,
   dailyWakeStatus,
   medicationLogs,
+  plannedLateDays,
   users,
   wakeLogs,
   type User,
@@ -543,6 +544,7 @@ export async function evaluateAndDispatchMedicationReminder(userId: string): Pro
   if (hoursSince >= 12) return; // already in "missed" territory — regular pipeline takes over
 
   const scheduledDay = dayKeyUY(scheduled);
+  if (await hasPlannedLateForDay(userId, scheduledDay)) return;
   const ds = await db.query.dailyStatus.findFirst({
     where: and(eq(dailyStatus.userId, userId), eq(dailyStatus.date, scheduledDay)),
   });
@@ -594,6 +596,86 @@ export async function checkMedicationRemindersForAllUsers(): Promise<void> {
       await evaluateAndDispatchMedicationReminder(u.id);
     } catch (e) {
       console.error(`[alerts] medication reminder check failed for user=${u.id}:`, e);
+    }
+  }
+}
+
+
+async function hasPlannedLateForDay(userId: string, dayKey: string): Promise<boolean> {
+  const db = getDb();
+  const row = await db.query.plannedLateDays.findFirst({
+    where: and(eq(plannedLateDays.userId, userId), eq(plannedLateDays.date, dayKey)),
+  });
+  return !!row;
+}
+
+const MEDICATION_TIME_WINDOW_MIN = 2;
+
+export async function evaluateAndDispatchMedicationTimeReminder(userId: string): Promise<void> {
+  const db = getDb();
+  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+  if (!user || user.role !== "user" || !user.patientPhone || !user.medicationTime) return;
+
+  const today = todayKeyUY();
+  const scheduled = combineDayAndTimeUY(today, user.medicationTime);
+  const diffMin = Math.abs(nowUY().getTime() - scheduled.getTime()) / 60_000;
+  if (diffMin > MEDICATION_TIME_WINDOW_MIN) return;
+  if (nowUY().getTime() < scheduled.getTime() - 30_000) return; // only at or after the hour
+
+  if (await hasPlannedLateForDay(userId, today)) return;
+
+  const ds = await db.query.dailyStatus.findFirst({
+    where: and(eq(dailyStatus.userId, userId), eq(dailyStatus.date, today)),
+  });
+  if (ds && (ds.status === "ontime" || ds.status === "late")) return;
+
+  const scheduledIso = toIsoUY(scheduled);
+  const alreadySent = await db
+    .select()
+    .from(alerts)
+    .where(
+      and(
+        eq(alerts.userId, userId),
+        eq(alerts.type, "medication_time_reminder"),
+        gte(alerts.triggeredAt, scheduledIso),
+      ),
+    )
+    .limit(1);
+  if (alreadySent.length > 0) return;
+
+  const triggeredAt = toIsoUY(nowUY());
+  const alertId = uuid();
+  const reason = `Recordatorio de horario programado (${user.medicationTime})`;
+  await db.insert(alerts).values({
+    id: alertId,
+    userId: user.id,
+    type: "medication_time_reminder",
+    triggeredAt,
+    reason,
+    emailsSentTo: JSON.stringify([]),
+    excelPath: null,
+    audioLogIds: null,
+    audioAttachmentCount: 0,
+    audioSkippedForSize: 0,
+    contactReached: null,
+    callsExhausted: 0,
+    nextRoundStartAt: null,
+    createdAt: triggeredAt,
+  });
+
+  console.log(`[alerts] medication-time reminder dispatched for user=${userId}`);
+  const { scheduleMedicationTimeReminderCall } = await import("./twilio");
+  await scheduleMedicationTimeReminderCall(alertId, user);
+}
+
+export async function checkMedicationTimeRemindersForAllUsers(): Promise<void> {
+  const db = getDb();
+  const allUsers = await db.select().from(users).where(eq(users.role, "user"));
+  for (const u of allUsers) {
+    try {
+      await evaluateAndDispatchMedicationTimeReminder(u.id);
+    } catch (e) {
+      console.error(`[alerts] medication-time reminder check failed for user=${u.id}:`, e);
     }
   }
 }

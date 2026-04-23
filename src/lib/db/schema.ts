@@ -92,12 +92,28 @@ export const dailyWakeStatus = sqliteTable(
   }),
 );
 
+export const plannedLateDays = sqliteTable(
+  "planned_late_days",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    note: text("note"),
+    createdAt: text("createdAt").notNull(),
+  },
+  (t) => ({
+    uniqUserDate: uniqueIndex("uq_planned_late_user_date").on(t.userId, t.date),
+  }),
+);
+
 export const alerts = sqliteTable("alerts", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  type: text("type", { enum: ["medication", "short_sleep", "wake_reminder", "medication_reminder"] }).notNull().default("medication"),
+  type: text("type", { enum: ["medication", "short_sleep", "wake_reminder", "medication_reminder", "medication_time_reminder"] }).notNull().default("medication"),
   triggeredAt: text("triggeredAt").notNull(),
   reason: text("reason").notNull(),
   emailsSentTo: text("emailsSentTo").notNull(),
@@ -160,6 +176,8 @@ export type DailyStatus = typeof dailyStatus.$inferSelect;
 export type WakeLog = typeof wakeLogs.$inferSelect;
 export type NewWakeLog = typeof wakeLogs.$inferInsert;
 export type DailyWakeStatus = typeof dailyWakeStatus.$inferSelect;
+export type PlannedLateDay = typeof plannedLateDays.$inferSelect;
+export type NewPlannedLateDay = typeof plannedLateDays.$inferInsert;
 export type Alert = typeof alerts.$inferSelect;
 export type NewAlert = typeof alerts.$inferInsert;
 export type CallLog = typeof callLogs.$inferSelect;

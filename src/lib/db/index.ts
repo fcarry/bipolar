@@ -98,6 +98,15 @@ export function initSchema() {
       UNIQUE(userId, date)
     );
 
+
+    CREATE TABLE IF NOT EXISTS planned_late_days (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      date TEXT NOT NULL,
+      note TEXT,
+      createdAt TEXT NOT NULL,
+      UNIQUE(userId, date)
+    );
     CREATE TABLE IF NOT EXISTS alerts (
       id TEXT PRIMARY KEY,
       userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

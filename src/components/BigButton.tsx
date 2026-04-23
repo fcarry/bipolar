@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Pill, Sunrise } from "lucide-react";
+import { CheckCircle2, Clock, Pill, Sunrise, X } from "lucide-react";
 import { LateModal } from "./LateModal";
+import { PlanLateModal } from "./PlanLateModal";
 import { WakeModal } from "./WakeModal";
 import { api, type MeUser } from "@/lib/client/api";
 
@@ -15,6 +16,12 @@ interface TodayStatus {
 interface TodayWake {
   status: "pending" | "ok" | "short" | "unknown";
   log?: { wokeAt: string; sleepHours: number | null; isShortSleep: boolean };
+}
+
+interface PlannedLate {
+  date: string;
+  note: string | null;
+  createdAt?: string;
 }
 
 const LATE_THRESHOLD_MIN = 240;
@@ -30,8 +37,10 @@ function fmtTime(iso: string) {
 export function BigButton({ user }: { user: MeUser }) {
   const [today, setToday] = useState<TodayStatus | null>(null);
   const [wakeToday, setWakeToday] = useState<TodayWake | null>(null);
+  const [plannedLate, setPlannedLate] = useState<PlannedLate | null>(null);
   const [medModalOpen, setMedModalOpen] = useState(false);
   const [wakeModalOpen, setWakeModalOpen] = useState(false);
+  const [planModalOpen, setPlanModalOpen] = useState(false);
   const [pendingDelay, setPendingDelay] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -39,12 +48,14 @@ export function BigButton({ user }: { user: MeUser }) {
 
   async function refresh() {
     try {
-      const [m, w] = await Promise.all([
+      const [m, w, pl] = await Promise.all([
         api<{ today: TodayStatus }>("/api/logs/today"),
         api<{ today: TodayWake }>("/api/wakes/today"),
+        api<{ plannedLate: PlannedLate | null }>("/api/plan-late/today"),
       ]);
       setToday(m.today);
       setWakeToday(w.today);
+      setPlannedLate(pl.plannedLate);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Error");
     }
@@ -105,6 +116,37 @@ export function BigButton({ user }: { user: MeUser }) {
     }
   }
 
+  async function commitPlanLate(note: string) {
+    setSubmitting(true);
+    setErr(null);
+    try {
+      await api("/api/plan-late", { method: "POST", json: { note: note || undefined } });
+      setPlanModalOpen(false);
+      setFlash("Postergación registrada ✔");
+      setTimeout(() => setFlash(null), 3000);
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Error al registrar");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function cancelPlanLate() {
+    setSubmitting(true);
+    setErr(null);
+    try {
+      await api("/api/plan-late", { method: "DELETE" });
+      setFlash("Postergación cancelada");
+      setTimeout(() => setFlash(null), 3000);
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function onMedTap() {
     if (today?.status && today.status !== "pending") return;
     const delay = computeDelay();
@@ -154,6 +196,32 @@ export function BigButton({ user }: { user: MeUser }) {
         )}
       </button>
 
+      {!medTaken && plannedLate && (
+        <div className="-mt-2 flex items-center gap-2 rounded-full bg-warning/20 px-4 py-2 text-sm text-warning-foreground">
+          <Clock size={16} />
+          <span>Postergación registrada{plannedLate.note ? ` — ${plannedLate.note}` : ""}</span>
+          <button
+            type="button"
+            className="rounded-full p-1 hover:bg-black/10"
+            onClick={cancelPlanLate}
+            aria-label="Cancelar postergación"
+            disabled={submitting}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {!medTaken && !plannedLate && (
+        <button
+          type="button"
+          onClick={() => setPlanModalOpen(true)}
+          disabled={submitting}
+          className="-mt-2 text-sm text-muted-foreground underline-offset-4 hover:underline"
+        >
+          Voy a tomar más tarde hoy
+        </button>
+      )}
+
       <button
         type="button"
         onClick={onWakeTap}
@@ -197,6 +265,13 @@ export function BigButton({ user }: { user: MeUser }) {
         <WakeModal
           onCancel={() => setWakeModalOpen(false)}
           onSubmit={commitWake}
+          loading={submitting}
+        />
+      )}
+      {planModalOpen && (
+        <PlanLateModal
+          onCancel={() => setPlanModalOpen(false)}
+          onSubmit={commitPlanLate}
           loading={submitting}
         />
       )}

@@ -76,9 +76,10 @@ export function UserForm({
       const body: UserFormValues = { ...v };
       if (mode === "edit" && !body.password) delete body.password;
       // If any per-day field is empty, fall back to the reference time so the backend never sees invalid data.
+      const bodyAny = body as unknown as Record<string, unknown>;
       for (const f of DOW_FIELDS) {
-        const key = f.key as keyof UserFormValues;
-        if (!body[key]) (body as Record<string, unknown>)[key] = body.medicationTime;
+        const key = f.key as string;
+        if (!bodyAny[key]) bodyAny[key] = body.medicationTime;
       }
       if (mode === "create") {
         await api("/api/admin/users", { method: "POST", json: body });

@@ -3,7 +3,7 @@ import { v4 as uuid } from "uuid";
 import { and, asc, eq, isNull, lte, ne } from "drizzle-orm";
 import twilioLib from "twilio";
 import { getDb } from "./db";
-import { alerts, callLogs, users, type Alert, type CallLog, type User } from "./db/schema";
+import { alerts, callLogs, users, type User } from "./db/schema";
 import { addHours, addMinutes, isAfterNineAmUY, nextNineAmUY, nowUY, toIsoUY } from "./time";
 
 const SID = process.env.TWILIO_ACCOUNT_SID;
@@ -23,7 +23,6 @@ let _client: ReturnType<typeof twilioLib> | null = null;
 function client() {
   if (_client) return _client;
   if (!SID || !FROM) return null;
-  // Prefer API Key + Secret if provided (recommended); fall back to Auth Token.
   if (API_KEY && API_SECRET && API_KEY.startsWith("SK")) {
     _client = twilioLib(API_KEY, API_SECRET, { accountSid: SID });
     return _client;
@@ -48,8 +47,6 @@ function targetForRound(roundNumber: number, user: User): string | null {
 }
 
 function callbackUrls(callLogId: string) {
-  // Path-based secret protects against forged callbacks when Auth Token signing
-  // isn't available (API Key + Secret auth doesn't provide webhook signing key).
   const secret = WEBHOOK_SECRET || "nosecret";
   return {
     twiml: `${APP_URL}/api/twilio/twiml/${callLogId}/${secret}`,
@@ -62,7 +59,6 @@ export async function scheduleFirstRoundCall(alertId: string, user: User): Promi
   const now = nowUY();
   const startAt = isAfterNineAmUY(now) ? now : nextNineAmUY(now);
   if (startAt.getTime() > now.getTime()) {
-    // Schedule for later via the cron poller
     await db.update(alerts).set({ nextRoundStartAt: toIsoUY(startAt) }).where(eq(alerts.id, alertId));
     console.log(`[twilio] alert ${alertId} round 1 deferred to ${toIsoUY(startAt)} (9 AM UY rule)`);
     return;
@@ -70,7 +66,19 @@ export async function scheduleFirstRoundCall(alertId: string, user: User): Promi
   await initiateCall(alertId, user.id, 1, 1);
 }
 
-/** Insert call_logs row + actually place call via Twilio. */
+/** Wake reminder: single call to patient, no retry pipeline. Respects 9 AM UY window. */
+export async function scheduleWakeReminderCall(alertId: string, user: User): Promise<void> {
+  const db = getDb();
+  const now = nowUY();
+  const startAt = isAfterNineAmUY(now) ? now : nextNineAmUY(now);
+  if (startAt.getTime() > now.getTime()) {
+    await db.update(alerts).set({ nextRoundStartAt: toIsoUY(startAt) }).where(eq(alerts.id, alertId));
+    console.log(`[twilio] wake-reminder ${alertId} deferred to ${toIsoUY(startAt)} (9 AM UY rule)`);
+    return;
+  }
+  await initiateCall(alertId, user.id, 1, 3);
+}
+
 export async function initiateCall(
   alertId: string,
   userId: string,
@@ -87,7 +95,6 @@ export async function initiateCall(
   }
   const id = uuid();
   const now = toIsoUY(nowUY());
-  // Clear nextRoundStartAt once we actually start the round
   await db.update(alerts).set({ nextRoundStartAt: null }).where(eq(alerts.id, alertId));
 
   const placeholder = isPlaceholder();
@@ -146,19 +153,36 @@ export async function initiateCall(
   }
 }
 
-/** Called after a call terminates (success or failure) — decides what's next. */
 export async function onCallTerminal(alertId: string, callLogId: string): Promise<void> {
   const db = getDb();
   const cl = await db.query.callLogs.findFirst({ where: eq(callLogs.id, callLogId) });
   if (!cl) return;
   const a = await db.query.alerts.findFirst({ where: eq(alerts.id, alertId) });
   if (!a) return;
-  if (a.contactReached || a.callsExhausted) return; // already concluded
+  if (a.contactReached || a.callsExhausted) return;
 
   const success =
     cl.status === "completed" &&
     (cl.duration ?? 0) >= MIN_SUCCESS_DURATION_SEC &&
     !(cl.answeredBy?.startsWith("machine_") ?? false);
+
+  // Wake reminder: single-shot. Success → contactReached; failure → callsExhausted. No retries.
+  if (a.type === "wake_reminder" || a.type === "medication_reminder") {
+    if (success) {
+      await db
+        .update(alerts)
+        .set({ contactReached: "patient_reminder", nextRoundStartAt: null })
+        .where(eq(alerts.id, alertId));
+      console.log(`[twilio] wake-reminder ${alertId} delivered to patient`);
+    } else {
+      await db
+        .update(alerts)
+        .set({ callsExhausted: 1, nextRoundStartAt: null })
+        .where(eq(alerts.id, alertId));
+      console.log(`[twilio] wake-reminder ${alertId} not delivered — no retry`);
+    }
+    return;
+  }
 
   if (success) {
     const reached = cl.roundNumber === 1 ? "emergency_round1" : cl.roundNumber === 2 ? "emergency_round2" : "patient";
@@ -170,7 +194,6 @@ export async function onCallTerminal(alertId: string, callLogId: string): Promis
     return;
   }
 
-  // schedule next attempt within same round
   if (cl.attemptNumber < ATTEMPTS_PER_ROUND) {
     const nextAt = addMinutes(nowUY(), RETRY_DELAY_MIN);
     await db
@@ -183,7 +206,6 @@ export async function onCallTerminal(alertId: string, callLogId: string): Promis
     return;
   }
 
-  // round exhausted → schedule next round or mark callsExhausted
   if (cl.roundNumber < 3) {
     const baseNext = addHours(nowUY(), ROUND_GAP_HOURS);
     const adjusted = isAfterNineAmUY(baseNext) ? baseNext : nextNineAmUY(baseNext);
@@ -203,12 +225,10 @@ export async function onCallTerminal(alertId: string, callLogId: string): Promis
   }
 }
 
-/** Cron: poll for retries due now and rounds whose start time arrived. */
 export async function pollAndDispatch(): Promise<void> {
   const db = getDb();
   const nowIso = toIsoUY(nowUY());
 
-  // 1. Pending retries within a round
   const dueRetries = await db
     .select()
     .from(callLogs)
@@ -220,38 +240,39 @@ export async function pollAndDispatch(): Promise<void> {
       await db.update(callLogs).set({ nextRetryAt: null }).where(eq(callLogs.id, cl.id));
       continue;
     }
-    // clear marker, fire next attempt
     await db.update(callLogs).set({ nextRetryAt: null }).where(eq(callLogs.id, cl.id));
     await initiateCall(cl.alertId, cl.userId, cl.attemptNumber + 1, cl.roundNumber);
   }
 
-  // 2. Scheduled next rounds whose time arrived
   const dueRounds = await db
     .select()
     .from(alerts)
     .where(and(lte(alerts.nextRoundStartAt, nowIso), eq(alerts.callsExhausted, 0), isNull(alerts.contactReached)));
   for (const a of dueRounds) {
     if (!a.nextRoundStartAt) continue;
-    // Determine which round to start: find max roundNumber existing for this alert
     const existing = await db
       .select()
       .from(callLogs)
       .where(eq(callLogs.alertId, a.id))
       .orderBy(asc(callLogs.roundNumber));
     const lastRound = existing.length === 0 ? 0 : Math.max(...existing.map((c) => c.roundNumber));
-    const nextRound = Math.min(3, lastRound + 1);
+    // Wake reminder is always a single patient call (round 3).
+    const nextRound = (a.type === "wake_reminder" || a.type === "medication_reminder") ? 3 : Math.min(3, lastRound + 1);
     await initiateCall(a.id, a.userId, 1, nextRound);
   }
 }
 
-/** Build TwiML XML for a given call log. */
 export async function buildTwimlForCall(callLogId: string): Promise<string> {
   const db = getDb();
   const cl = await db.query.callLogs.findFirst({ where: eq(callLogs.id, callLogId) });
   if (!cl) return twimlGeneric();
   const u = await db.query.users.findFirst({ where: eq(users.id, cl.userId) });
+  const a = await db.query.alerts.findFirst({ where: eq(alerts.id, cl.alertId) });
   const fullName = u?.fullName ?? "el paciente";
   const contactEmail = u?.emergencyContactEmail ?? "su correo";
+  if (a?.type === "wake_reminder") return twimlWakeReminder(fullName);
+  if (a?.type === "medication_reminder") return twimlMedicationReminder(fullName);
+  if (a?.type === "short_sleep") return twimlShortSleep(fullName, contactEmail, cl.roundNumber);
   if (cl.roundNumber === 3) return twimlPatient(fullName);
   return twimlEmergency(fullName, contactEmail);
 }
@@ -265,6 +286,55 @@ function twimlEmergency(fullName: string, contactEmail: string): string {
   <Say language="es-MX" voice="Polly.Mia">El paciente ${escapeXml(fullName)} ha presentado incumplimiento en la toma de su medicación durante los últimos días. Por favor, revise el correo electrónico enviado a ${escapeXml(contactEmail)} para ver el detalle.</Say>
   <Pause length="2"/>
   <Say language="es-MX" voice="Polly.Mia">Repito: alerta de medicación para ${escapeXml(fullName)}. Por favor, contacte al paciente lo antes posible.</Say>
+  <Pause length="1"/>
+</Response>`;
+}
+
+function twimlShortSleep(fullName: string, contactEmail: string, roundNumber: number): string {
+  if (roundNumber === 3) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Hola ${escapeXml(fullName)}. Este es un aviso automático del sistema Bipolar.</Say>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Detectamos tres o más noches con menos de cinco horas de sueño en los últimos siete días. Tu contacto de emergencia no atendió nuestras llamadas. Por favor contactate con tu red de apoyo.</Say>
+  <Pause length="1"/>
+</Response>`;
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Hola. Este es un aviso automático del sistema de seguimiento de sueño.</Say>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">El paciente ${escapeXml(fullName)} registró tres o más noches con menos de cinco horas de sueño en los últimos siete días. Por favor, revise el correo enviado a ${escapeXml(contactEmail)} para ver el detalle.</Say>
+  <Pause length="2"/>
+  <Say language="es-MX" voice="Polly.Mia">Repito: alerta de sueño corto para ${escapeXml(fullName)}. Por favor, contacte al paciente lo antes posible.</Say>
+  <Pause length="1"/>
+</Response>`;
+}
+
+function twimlWakeReminder(fullName: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Hola ${escapeXml(fullName)}. Este es un recordatorio automático.</Say>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">No registraste aún tu despertar en la aplicación. Cuando te sea posible, abrí la aplicación y tocá el botón me desperté. Si ya te levantaste, podés indicar la hora real del despertar.</Say>
+  <Pause length="2"/>
+  <Say language="es-MX" voice="Polly.Mia">Repito: recordá marcar me desperté en la aplicación Bipolar.</Say>
+  <Pause length="1"/>
+</Response>`;
+}
+
+function twimlMedicationReminder(fullName: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Hola ${escapeXml(fullName)}. Este es un recordatorio automático del sistema Bipolar.</Say>
+  <Pause length="1"/>
+  <Say language="es-MX" voice="Polly.Mia">Todavía no registraste que tomaste tus remedios hoy. Si ya los tomaste, abrí la aplicación y marcá la toma. Podés indicar la hora real a la que los tomaste.</Say>
+  <Pause length="2"/>
+  <Say language="es-MX" voice="Polly.Mia">Repito: recordá marcar tomé los remedios en la aplicación.</Say>
   <Pause length="1"/>
 </Response>`;
 }
@@ -293,12 +363,6 @@ function escapeXml(s: string): string {
   );
 }
 
-/** Validate inbound webhook authenticity.
- *  - If TWILIO_AUTH_TOKEN is configured: use Twilio's HMAC signature validation.
- *  - Else: fall back to path-based shared secret (must match TWILIO_WEBHOOK_SECRET).
- *    This is needed when only API Key + Secret auth is configured (no auth token
- *    available for HMAC). Less secure but unguessable if WEBHOOK_SECRET is random.
- */
 export function validateTwilioWebhook(args: {
   signature: string | null;
   url: string;
@@ -325,15 +389,26 @@ export function validateTwilioSignature(args: {
   return validateTwilioWebhook({ ...args, pathSecret: null });
 }
 
-/** Manually trigger a fresh attempt (admin "retry now" button). */
 export async function manualRetry(alertId: string): Promise<void> {
   const db = getDb();
   const a = await db.query.alerts.findFirst({ where: eq(alerts.id, alertId) });
   if (!a || a.contactReached) return;
-  // Find max round so far
   const existing = await db.select().from(callLogs).where(eq(callLogs.alertId, a.id));
   const lastRound = existing.length === 0 ? 1 : Math.max(...existing.map((c) => c.roundNumber));
-  // Clear callsExhausted to allow another sweep (admin override)
   await db.update(alerts).set({ callsExhausted: 0, nextRoundStartAt: null }).where(eq(alerts.id, a.id));
-  await initiateCall(alertId, a.userId, 1, Math.min(3, lastRound));
+  const round = (a.type === "wake_reminder" || a.type === "medication_reminder") ? 3 : Math.min(3, lastRound);
+  await initiateCall(alertId, a.userId, 1, round);
+}
+
+/** Medication reminder: single call to patient, no retry. Respects 9 AM UY window. */
+export async function scheduleMedicationReminderCall(alertId: string, user: User): Promise<void> {
+  const db = getDb();
+  const now = nowUY();
+  const startAt = isAfterNineAmUY(now) ? now : nextNineAmUY(now);
+  if (startAt.getTime() > now.getTime()) {
+    await db.update(alerts).set({ nextRoundStartAt: toIsoUY(startAt) }).where(eq(alerts.id, alertId));
+    console.log(`[twilio] medication-reminder ${alertId} deferred to ${toIsoUY(startAt)} (9 AM UY rule)`);
+    return;
+  }
+  await initiateCall(alertId, user.id, 1, 3);
 }

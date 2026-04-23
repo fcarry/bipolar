@@ -10,15 +10,13 @@ function nowHHmm() {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-export function LateModal({
-  delayMin,
+export function WakeModal({
   onCancel,
   onSubmit,
   loading,
 }: {
-  delayMin: number;
   onCancel: () => void;
-  onSubmit: (p: { description: string; audio: Blob | null; takenAt: string | null }) => void | Promise<void>;
+  onSubmit: (p: { wokeAt: string; description: string; audio: Blob | null }) => void | Promise<void>;
   loading: boolean;
 }) {
   const initial = useMemo(() => nowHHmm(), []);
@@ -27,8 +25,7 @@ export function LateModal({
   const [description, setDescription] = useState("");
   const [audio, setAudio] = useState<AudioRecorderHandle>({ blob: null, durationSec: 0 });
 
-  function buildTakenAt(): string | null {
-    if (time === initial && !yesterday) return null; // keep server default = now
+  function buildWokeAt(): string | null {
     const [hh, mm] = time.split(":").map((v) => parseInt(v, 10));
     if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
     const d = new Date();
@@ -38,40 +35,48 @@ export function LateModal({
     return d.toISOString();
   }
 
-  const takenAt = buildTakenAt();
-  const futureInvalid = time !== initial && !yesterday && takenAt === null;
-  const canSubmit =
-    !futureInvalid && (description.trim().length > 0 || audio.blob !== null) && !loading;
+  const wokeAt = buildWokeAt();
+  const canSubmit = !!wokeAt && !loading;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
       <div className="w-full max-w-md space-y-4 rounded-lg border border-muted bg-background p-5">
         <div>
-          <h2 className="text-xl font-semibold">Tomá tarde — explicá brevemente</h2>
+          <h2 className="text-xl font-semibold">Me desperté — confirmá la hora</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Llegaste {Math.round(delayMin / 60)} h {delayMin % 60} min después de tu horario. Podés ajustar la hora real
-            si los tomaste antes y te acordás ahora.
+            Por default queda la hora actual. Si te despertaste antes, ajustala.
           </p>
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="taken-time">Hora real de la toma</Label>
-          <Input id="taken-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          <Label htmlFor="wake-time">Hora del despertar</Label>
+          <Input
+            id="wake-time"
+            type="time"
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+          />
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <input type="checkbox" checked={yesterday} onChange={(e) => setYesterday(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={yesterday}
+              onChange={(e) => setYesterday(e.target.checked)}
+            />
             Fue ayer
           </label>
-          {futureInvalid && <p className="text-sm text-destructive">La hora elegida está en el futuro.</p>}
+          {!wokeAt && (
+            <p className="text-sm text-destructive">La hora elegida está en el futuro.</p>
+          )}
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="reason">Descripción</Label>
+          <Label htmlFor="wake-note">Descripción (opcional)</Label>
           <Textarea
-            id="reason"
+            id="wake-note"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="¿Qué pasó?"
-            rows={3}
+            placeholder="¿Cómo amaneciste?"
+            rows={2}
           />
         </div>
 
@@ -85,14 +90,15 @@ export function LateModal({
             className="flex-1"
             disabled={!canSubmit}
             onClick={() =>
+              wokeAt &&
               onSubmit({
+                wokeAt,
                 description: description.trim(),
                 audio: audio.blob,
-                takenAt,
               })
             }
           >
-            {loading ? "Guardando…" : "Confirmar toma"}
+            {loading ? "Guardando…" : "Registrar despertar"}
           </Button>
         </div>
       </div>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Menu, X, History, BarChart3, LogOut } from "lucide-react";
+import { Menu, X, History, BarChart3, LogOut, Sunrise, Moon } from "lucide-react";
 import { api, clearToken } from "@/lib/client/api";
 import { Button } from "@/components/ui/Button";
 
@@ -43,7 +43,8 @@ export function HamburgerMenu() {
                 <X size={24} />
               </button>
             </div>
-            <nav className="space-y-2">
+            <nav className="space-y-1">
+              <p className="px-3 pt-2 text-xs uppercase tracking-wide text-muted-foreground">Medicación</p>
               <Link
                 href="/history"
                 className="flex items-center gap-3 rounded-md p-3 hover:bg-muted"
@@ -58,9 +59,26 @@ export function HamburgerMenu() {
               >
                 <BarChart3 size={20} /> Gráfica
               </Link>
-              <Button variant="ghost" className="w-full justify-start gap-3 px-3" onClick={logout}>
-                <LogOut size={20} /> Cerrar sesión
-              </Button>
+              <p className="px-3 pt-3 text-xs uppercase tracking-wide text-muted-foreground">Despertar</p>
+              <Link
+                href="/wakes/history"
+                className="flex items-center gap-3 rounded-md p-3 hover:bg-muted"
+                onClick={() => setOpen(false)}
+              >
+                <Sunrise size={20} /> Historial despertar
+              </Link>
+              <Link
+                href="/wakes/chart"
+                className="flex items-center gap-3 rounded-md p-3 hover:bg-muted"
+                onClick={() => setOpen(false)}
+              >
+                <Moon size={20} /> Gráfica sueño
+              </Link>
+              <div className="pt-3">
+                <Button variant="ghost" className="w-full justify-start gap-3 px-3" onClick={logout}>
+                  <LogOut size={20} /> Cerrar sesión
+                </Button>
+              </div>
             </nav>
           </aside>
         </div>

@@ -73,9 +73,35 @@ export function initSchema() {
       UNIQUE(userId, date)
     );
 
+    CREATE TABLE IF NOT EXISTS wake_logs (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      wokeAt TEXT NOT NULL,
+      lastMedicationLogId TEXT REFERENCES medication_logs(id),
+      lastMedicationAt TEXT,
+      sleepHours REAL,
+      isShortSleep INTEGER NOT NULL DEFAULT 0,
+      description TEXT,
+      audioPath TEXT,
+      createdAt TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_wakes_user_woke ON wake_logs(userId, wokeAt);
+
+    CREATE TABLE IF NOT EXISTS daily_wake_status (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      date TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('ok','short','unknown')),
+      wakeLogId TEXT REFERENCES wake_logs(id),
+      sleepHours REAL,
+      createdAt TEXT NOT NULL,
+      UNIQUE(userId, date)
+    );
+
     CREATE TABLE IF NOT EXISTS alerts (
       id TEXT PRIMARY KEY,
       userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT 'medication',
       triggeredAt TEXT NOT NULL,
       reason TEXT NOT NULL,
       emailsSentTo TEXT NOT NULL,
@@ -119,6 +145,13 @@ export function initSchema() {
       revokedAt TEXT
     );
   `);
+
+  // Backfill: add alerts.type if upgrading from a pre-wake-tracking DB.
+  const alertsCols = s.prepare("PRAGMA table_info(alerts)").all() as { name: string }[];
+  if (!alertsCols.some((c) => c.name === "type")) {
+    s.exec(`ALTER TABLE alerts ADD COLUMN type TEXT NOT NULL DEFAULT 'medication';`);
+    console.log("[db] migrated: added alerts.type column");
+  }
 }
 
 export { schema };

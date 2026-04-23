@@ -44,3 +44,6 @@ export const chartQuerySchema = z.object({
 export const logCreateSchema = z.object({
   description: z.string().trim().max(2000).optional(),
 });
+
+export const wakesQuerySchema = logsQuerySchema;
+export const wakeChartQuerySchema = chartQuerySchema;

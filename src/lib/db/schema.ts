@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -53,11 +53,51 @@ export const dailyStatus = sqliteTable(
   }),
 );
 
+export const wakeLogs = sqliteTable(
+  "wake_logs",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    wokeAt: text("wokeAt").notNull(),
+    lastMedicationLogId: text("lastMedicationLogId").references(() => medicationLogs.id),
+    lastMedicationAt: text("lastMedicationAt"),
+    sleepHours: real("sleepHours"),
+    isShortSleep: integer("isShortSleep").notNull().default(0),
+    description: text("description"),
+    audioPath: text("audioPath"),
+    createdAt: text("createdAt").notNull(),
+  },
+  (t) => ({
+    byUserWoke: index("idx_wakes_user_woke").on(t.userId, t.wokeAt),
+  }),
+);
+
+export const dailyWakeStatus = sqliteTable(
+  "daily_wake_status",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    status: text("status", { enum: ["ok", "short", "unknown"] }).notNull(),
+    wakeLogId: text("wakeLogId").references(() => wakeLogs.id),
+    sleepHours: real("sleepHours"),
+    createdAt: text("createdAt").notNull(),
+  },
+  (t) => ({
+    uniqUserDate: uniqueIndex("uq_daily_wake_user_date").on(t.userId, t.date),
+  }),
+);
+
 export const alerts = sqliteTable("alerts", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
+  type: text("type", { enum: ["medication", "short_sleep", "wake_reminder", "medication_reminder"] }).notNull().default("medication"),
   triggeredAt: text("triggeredAt").notNull(),
   reason: text("reason").notNull(),
   emailsSentTo: text("emailsSentTo").notNull(),
@@ -117,6 +157,9 @@ export type NewUser = typeof users.$inferInsert;
 export type MedicationLog = typeof medicationLogs.$inferSelect;
 export type NewMedicationLog = typeof medicationLogs.$inferInsert;
 export type DailyStatus = typeof dailyStatus.$inferSelect;
+export type WakeLog = typeof wakeLogs.$inferSelect;
+export type NewWakeLog = typeof wakeLogs.$inferInsert;
+export type DailyWakeStatus = typeof dailyWakeStatus.$inferSelect;
 export type Alert = typeof alerts.$inferSelect;
 export type NewAlert = typeof alerts.$inferInsert;
 export type CallLog = typeof callLogs.$inferSelect;

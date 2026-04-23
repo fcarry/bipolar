@@ -1,6 +1,6 @@
 import "server-only";
 import cron from "node-cron";
-import { dailyRollup, markMissedDays } from "./alerts";
+import { checkMedicationRemindersForAllUsers, checkWakeRemindersForAllUsers, dailyRollup, markMissedDays } from "./alerts";
 import { pollAndDispatch } from "./twilio";
 
 let started = false;
@@ -9,7 +9,6 @@ export function startCron() {
   if (started) return;
   started = true;
 
-  // Every minute: handle 12h missed marking + Twilio retry/round dispatch.
   cron.schedule(
     "* * * * *",
     async () => {
@@ -17,6 +16,16 @@ export function startCron() {
         await markMissedDays();
       } catch (e) {
         console.error("[cron] markMissedDays:", e);
+      }
+      try {
+        await checkWakeRemindersForAllUsers();
+      } catch (e) {
+        console.error("[cron] checkWakeReminders:", e);
+      }
+      try {
+        await checkMedicationRemindersForAllUsers();
+      } catch (e) {
+        console.error("[cron] checkMedicationReminders:", e);
       }
       try {
         await pollAndDispatch();
@@ -27,7 +36,6 @@ export function startCron() {
     { timezone: "America/Montevideo" },
   );
 
-  // Daily 23:59 UY: idempotent rollup of daily_status + alert evaluation.
   cron.schedule(
     "59 23 * * *",
     async () => {
@@ -40,5 +48,5 @@ export function startCron() {
     { timezone: "America/Montevideo" },
   );
 
-  console.log("[cron] scheduled: */1m (missed+twilio) and 23:59 UY daily");
+  console.log("[cron] scheduled: */1m (missed+wake+med-reminder+twilio) and 23:59 UY daily");
 }

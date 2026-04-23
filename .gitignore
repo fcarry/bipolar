@@ -1,0 +1,29 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# data persisted at runtime (DB, audio uploads, xlsx reports)
+data/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

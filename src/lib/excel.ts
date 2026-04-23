@@ -53,8 +53,8 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
     { header: "Hora real", key: "real", width: 14 },
     { header: "Delay (min)", key: "delay", width: 14 },
     { header: "Estado", key: "status", width: 12 },
-    { header: "Descripción", key: "description", width: 40 },
-    { header: "Audio", key: "audio", width: 10 },
+    { header: "Motivo (retraso)", key: "description", width: 44 },
+    { header: "Audio adjunto", key: "audio", width: 34 },
   ];
   s1.getRow(1).font = { bold: true };
 
@@ -73,8 +73,10 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
       real: log ? fmtTimeUY(log.takenAt) : "—",
       delay: log ? log.delayMinutes : "—",
       status: ds === "ontime" ? "A tiempo" : ds === "late" ? "Tarde" : "FALTÓ",
-      description: log?.description ?? "—",
-      audio: log?.audioPath ? "Sí" : "—",
+      description: log?.description ?? (log?.audioPath ? "(ver audio adjunto)" : "—"),
+      audio: log?.audioPath
+        ? `audio-${d}-${log.takenAt.slice(11, 16).replace(":", "")}.webm`
+        : "—",
     });
     const color = ds === "ontime" ? COLOR_GREEN : ds === "late" ? COLOR_YELLOW : COLOR_RED;
     row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: color } };
@@ -108,10 +110,10 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
       { header: "Día", key: "weekday", width: 12 },
       { header: "Hora despertar", key: "woke", width: 14 },
       { header: "Última toma", key: "lastMed", width: 18 },
-      { header: "Horas dormidas", key: "sleep", width: 16 },
+      { header: "Horas dormidas", key: "sleep", width: 18 },
       { header: "Estado", key: "status", width: 14 },
-      { header: "Descripción", key: "description", width: 40 },
-      { header: "Audio", key: "audio", width: 10 },
+      { header: "Motivo / cómo amaneció", key: "description", width: 44 },
+      { header: "Audio adjunto", key: "audio", width: 38 },
     ];
     sw.getRow(1).font = { bold: true };
     for (const d of daysSeq) {
@@ -131,11 +133,15 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
         lastMed: wake?.lastMedicationAt ? fmtTimeUY(wake.lastMedicationAt) : "—",
         sleep: sleepHours != null ? sleepHours.toFixed(2) : "—",
         status: status === "ok" ? "OK" : status === "short" ? "CORTO (<5h)" : "Sin dato",
-        description: wake?.description ?? "—",
-        audio: wake?.audioPath ? "Sí" : "—",
+        description: wake?.description ?? (wake?.audioPath ? "(ver audio adjunto)" : "—"),
+        audio: wake?.audioPath
+          ? `despertar-${d}-${wake.wokeAt.slice(11, 16).replace(":", "")}.webm`
+          : "—",
       });
       const color = status === "ok" ? COLOR_GREEN : status === "short" ? COLOR_RED : COLOR_GRAY;
       row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: color } };
+      row.getCell("sleep").font = { bold: true };
+      if (status === "short") row.getCell("sleep").fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_RED } };
       if (status === "ok") totalWakeOk++;
       else if (status === "short") totalWakeShort++;
       else totalWakeUnknown++;

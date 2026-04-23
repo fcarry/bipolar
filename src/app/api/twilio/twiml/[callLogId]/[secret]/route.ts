@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { buildTwimlForCall, validateTwilioSignature } from "@/lib/twilio";
+import { buildTwimlForCall, validateTwilioWebhook } from "@/lib/twilio";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,12 +13,16 @@ async function parseFormParams(req: NextRequest): Promise<Record<string, string>
   return out;
 }
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ callLogId: string }> }) {
-  const { callLogId } = await ctx.params;
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ callLogId: string; secret: string }> },
+) {
+  const { callLogId, secret } = await ctx.params;
   const params = await parseFormParams(req);
   const sig = req.headers.get("x-twilio-signature");
-  const url = `${process.env.APP_URL || "https://bipolar.tumvp.uy"}/api/twilio/twiml/${callLogId}`;
-  if (!validateTwilioSignature({ signature: sig, url, params })) {
+  const base = process.env.APP_URL || "https://bipolar.tumvp.uy";
+  const url = `${base}/api/twilio/twiml/${callLogId}/${secret}`;
+  if (!validateTwilioWebhook({ signature: sig, url, params, pathSecret: secret })) {
     return new Response("Forbidden", { status: 403 });
   }
   const xml = await buildTwimlForCall(callLogId);

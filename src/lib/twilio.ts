@@ -8,8 +8,11 @@ import { addHours, addMinutes, isAfterNineAmUY, nextNineAmUY, nowUY, toIsoUY } f
 
 const SID = process.env.TWILIO_ACCOUNT_SID;
 const TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const API_KEY = process.env.TWILIO_API_KEY_SID;
+const API_SECRET = process.env.TWILIO_API_KEY_SECRET;
 const FROM = process.env.TWILIO_FROM_NUMBER;
 const APP_URL = process.env.APP_URL || "https://bipolar.tumvp.uy";
+const WEBHOOK_SECRET = process.env.TWILIO_WEBHOOK_SECRET;
 
 const RETRY_DELAY_MIN = 10;
 const ATTEMPTS_PER_ROUND = 4;
@@ -18,13 +21,25 @@ const MIN_SUCCESS_DURATION_SEC = 5;
 
 let _client: ReturnType<typeof twilioLib> | null = null;
 function client() {
-  if (!SID || !TOKEN || !FROM) return null;
-  if (!_client) _client = twilioLib(SID, TOKEN);
-  return _client;
+  if (_client) return _client;
+  if (!SID || !FROM) return null;
+  // Prefer API Key + Secret if provided (recommended); fall back to Auth Token.
+  if (API_KEY && API_SECRET && API_KEY.startsWith("SK")) {
+    _client = twilioLib(API_KEY, API_SECRET, { accountSid: SID });
+    return _client;
+  }
+  if (TOKEN && !TOKEN.startsWith("xxxx")) {
+    _client = twilioLib(SID, TOKEN);
+    return _client;
+  }
+  return null;
 }
 
 function isPlaceholder(): boolean {
-  return !SID || SID.startsWith("ACxxxx") || !TOKEN || TOKEN.startsWith("xxxx") || !FROM || FROM === "+10000000000";
+  if (!SID || SID.startsWith("ACxxxx") || !FROM || FROM === "+10000000000") return true;
+  const hasApiKey = !!API_KEY && !!API_SECRET && API_KEY.startsWith("SK");
+  const hasToken = !!TOKEN && !TOKEN.startsWith("xxxx");
+  return !hasApiKey && !hasToken;
 }
 
 function targetForRound(roundNumber: number, user: User): string | null {
@@ -33,9 +48,12 @@ function targetForRound(roundNumber: number, user: User): string | null {
 }
 
 function callbackUrls(callLogId: string) {
+  // Path-based secret protects against forged callbacks when Auth Token signing
+  // isn't available (API Key + Secret auth doesn't provide webhook signing key).
+  const secret = WEBHOOK_SECRET || "nosecret";
   return {
-    twiml: `${APP_URL}/api/twilio/twiml/${callLogId}`,
-    status: `${APP_URL}/api/twilio/status/${callLogId}`,
+    twiml: `${APP_URL}/api/twilio/twiml/${callLogId}/${secret}`,
+    status: `${APP_URL}/api/twilio/status/${callLogId}/${secret}`,
   };
 }
 
@@ -275,15 +293,36 @@ function escapeXml(s: string): string {
   );
 }
 
-/** Validate Twilio signature on a webhook request. */
+/** Validate inbound webhook authenticity.
+ *  - If TWILIO_AUTH_TOKEN is configured: use Twilio's HMAC signature validation.
+ *  - Else: fall back to path-based shared secret (must match TWILIO_WEBHOOK_SECRET).
+ *    This is needed when only API Key + Secret auth is configured (no auth token
+ *    available for HMAC). Less secure but unguessable if WEBHOOK_SECRET is random.
+ */
+export function validateTwilioWebhook(args: {
+  signature: string | null;
+  url: string;
+  params: Record<string, string>;
+  pathSecret: string | null;
+}): boolean {
+  if (TOKEN && !TOKEN.startsWith("xxxx")) {
+    if (!args.signature) return false;
+    return twilioLib.validateRequest(TOKEN, args.signature, args.url, args.params);
+  }
+  if (!WEBHOOK_SECRET || WEBHOOK_SECRET.length < 16) {
+    console.warn("[twilio] no AUTH_TOKEN and no strong WEBHOOK_SECRET — rejecting webhook");
+    return false;
+  }
+  return args.pathSecret === WEBHOOK_SECRET;
+}
+
+/** @deprecated kept for backwards compat; prefer validateTwilioWebhook */
 export function validateTwilioSignature(args: {
   signature: string | null;
   url: string;
   params: Record<string, string>;
 }): boolean {
-  if (!TOKEN) return false;
-  if (!args.signature) return false;
-  return twilioLib.validateRequest(TOKEN, args.signature, args.url, args.params);
+  return validateTwilioWebhook({ ...args, pathSecret: null });
 }
 
 /** Manually trigger a fresh attempt (admin "retry now" button). */

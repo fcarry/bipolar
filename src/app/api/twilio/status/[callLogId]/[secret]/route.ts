@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { callLogs } from "@/lib/db/schema";
-import { onCallTerminal, validateTwilioSignature } from "@/lib/twilio";
+import { onCallTerminal, validateTwilioWebhook } from "@/lib/twilio";
 import { nowUY, toIsoUY } from "@/lib/time";
 
 export const runtime = "nodejs";
@@ -10,16 +10,20 @@ export const dynamic = "force-dynamic";
 
 const TERMINAL = new Set(["completed", "failed", "no-answer", "busy", "canceled"]);
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ callLogId: string }> }) {
-  const { callLogId } = await ctx.params;
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ callLogId: string; secret: string }> },
+) {
+  const { callLogId, secret } = await ctx.params;
   const fd = await req.formData();
   const params: Record<string, string> = {};
   fd.forEach((v, k) => {
     if (typeof v === "string") params[k] = v;
   });
   const sig = req.headers.get("x-twilio-signature");
-  const url = `${process.env.APP_URL || "https://bipolar.tumvp.uy"}/api/twilio/status/${callLogId}`;
-  if (!validateTwilioSignature({ signature: sig, url, params })) {
+  const base = process.env.APP_URL || "https://bipolar.tumvp.uy";
+  const url = `${base}/api/twilio/status/${callLogId}/${secret}`;
+  if (!validateTwilioWebhook({ signature: sig, url, params, pathSecret: secret })) {
     return new Response("Forbidden", { status: 403 });
   }
 

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { PWARegister } from "@/components/PWARegister";
 
 export const metadata: Metadata = {
   title: "Bipolar — Seguimiento de Medicación",
@@ -25,7 +26,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="es-UY">
-      <body>{children}</body>
+      <body>
+        {children}
+        <PWARegister />
+      </body>
     </html>
   );
 }

@@ -10,6 +10,7 @@ import { api, type MeUser } from "@/lib/client/api";
 interface TodayStatus {
   status: "pending" | "ontime" | "late" | "missed";
   log?: { takenAt: string; delayMinutes: number };
+  lastLog?: { takenAt: string; delayMinutes: number };
   scheduledFor: string | null;
   scheduledTime?: string | null;
 }
@@ -17,6 +18,7 @@ interface TodayStatus {
 interface TodayWake {
   status: "pending" | "ok" | "short" | "unknown";
   log?: { wokeAt: string; sleepHours: number | null; isShortSleep: boolean };
+  lastLog?: { wokeAt: string; sleepHours: number | null; isShortSleep: boolean };
 }
 
 interface PlannedLate {
@@ -33,6 +35,22 @@ function fmtTime(iso: string) {
     minute: "2-digit",
     timeZone: "America/Montevideo",
   });
+}
+
+function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString("es-UY", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "America/Montevideo",
+  });
+  const time = d.toLocaleTimeString("es-UY", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Montevideo",
+  });
+  return `${date} ${time}`;
 }
 
 export function BigButton({ user }: { user: MeUser }) {
@@ -175,24 +193,31 @@ export function BigButton({ user }: { user: MeUser }) {
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={onMedTap}
-        disabled={submitting || medTaken}
-        className={`flex aspect-[3/2] w-[80vw] max-w-md flex-col items-center justify-center gap-3 rounded-3xl text-center text-2xl font-bold shadow-2xl transition-transform active:scale-[0.97]
-          ${medTaken ? "bg-success text-success-foreground" : "bg-primary text-primary-foreground"}`}
-      >
-        {medTaken ? <CheckCircle2 size={56} /> : <Pill size={56} />}
-        <span>{medTaken ? "TOMADO" : "TOMÉ LOS REMEDIOS"}</span>
-        {today?.status === "ontime" && today.log && (
-          <span className="text-sm font-normal opacity-80">A las {fmtTime(today.log.takenAt)}</span>
+      <div className="flex w-full flex-col items-center gap-2">
+        <button
+          type="button"
+          onClick={onMedTap}
+          disabled={submitting || medTaken}
+          className={`flex aspect-[3/2] w-[80vw] max-w-md flex-col items-center justify-center gap-3 rounded-3xl text-center text-2xl font-bold shadow-2xl transition-transform active:scale-[0.97]
+            ${medTaken ? "bg-success text-success-foreground" : "bg-primary text-primary-foreground"}`}
+        >
+          {medTaken ? <CheckCircle2 size={56} /> : <Pill size={56} />}
+          <span>{medTaken ? "TOMADO" : "TOMÉ LOS REMEDIOS"}</span>
+          {today?.status === "ontime" && today.log && (
+            <span className="text-sm font-normal opacity-80">A las {fmtTime(today.log.takenAt)}</span>
+          )}
+          {today?.status === "late" && today.log && (
+            <span className="text-sm font-normal opacity-80">
+              Tarde ({today.log.delayMinutes} min)
+            </span>
+          )}
+        </button>
+        {today?.lastLog && (
+          <p className="text-xs text-muted-foreground">
+            Última toma: {fmtDateTime(today.lastLog.takenAt)}
+          </p>
         )}
-        {today?.status === "late" && today.log && (
-          <span className="text-sm font-normal opacity-80">
-            Tarde ({today.log.delayMinutes} min)
-          </span>
-        )}
-      </button>
+      </div>
 
       {!medTaken && plannedLate && (
         <div className="-mt-2 flex items-center gap-2 rounded-full bg-warning/20 px-4 py-2 text-sm text-warning-foreground">
@@ -220,25 +245,32 @@ export function BigButton({ user }: { user: MeUser }) {
         </button>
       )}
 
-      <button
-        type="button"
-        onClick={onWakeTap}
-        disabled={submitting || wakeTaken}
-        className={`flex aspect-[3/2] w-[80vw] max-w-md flex-col items-center justify-center gap-3 rounded-3xl text-center text-2xl font-bold shadow-2xl transition-transform active:scale-[0.97]
-          ${wakeTaken ? "bg-success text-success-foreground" : "bg-warning text-warning-foreground"}`}
-      >
-        {wakeTaken ? <CheckCircle2 size={56} /> : <Sunrise size={56} />}
-        <span>{wakeTaken ? "DESPERTAR REGISTRADO" : "ME DESPERTÉ"}</span>
-        {wakeToday?.log && (
-          <span className="text-sm font-normal opacity-80">
-            {fmtTime(wakeToday.log.wokeAt)}
-            {wakeToday.log.sleepHours != null && (
-              <> — {wakeToday.log.sleepHours.toFixed(1)}h dormidas</>
-            )}
-            {wakeToday.log.isShortSleep && " (sueño corto)"}
-          </span>
+      <div className="flex w-full flex-col items-center gap-2">
+        <button
+          type="button"
+          onClick={onWakeTap}
+          disabled={submitting || wakeTaken}
+          className={`flex aspect-[3/2] w-[80vw] max-w-md flex-col items-center justify-center gap-3 rounded-3xl text-center text-2xl font-bold shadow-2xl transition-transform active:scale-[0.97]
+            ${wakeTaken ? "bg-success text-success-foreground" : "bg-warning text-warning-foreground"}`}
+        >
+          {wakeTaken ? <CheckCircle2 size={56} /> : <Sunrise size={56} />}
+          <span>{wakeTaken ? "DESPERTAR REGISTRADO" : "ME DESPERTÉ"}</span>
+          {wakeToday?.log && (
+            <span className="text-sm font-normal opacity-80">
+              {fmtTime(wakeToday.log.wokeAt)}
+              {wakeToday.log.sleepHours != null && (
+                <> — {wakeToday.log.sleepHours.toFixed(1)}h dormidas</>
+              )}
+              {wakeToday.log.isShortSleep && " (sueño corto)"}
+            </span>
+          )}
+        </button>
+        {wakeToday?.lastLog && (
+          <p className="text-xs text-muted-foreground">
+            Último despertar: {fmtDateTime(wakeToday.lastLog.wokeAt)}
+          </p>
         )}
-      </button>
+      </div>
 
       {flash && (
         <p className="fixed bottom-10 left-1/2 -translate-x-1/2 rounded-md bg-success px-4 py-2 text-success-foreground shadow-lg">

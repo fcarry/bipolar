@@ -8,6 +8,10 @@ import { todayKeyUY } from "@/lib/time";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Reset the on-screen "pressed" state 12 h after the registered wake,
+// so the patient can log again if needed (button returns to pending).
+const RESET_AFTER_MS = 12 * 60 * 60 * 1000;
+
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
@@ -21,16 +25,20 @@ export async function GET(req: NextRequest) {
     if (ds?.wakeLogId) {
       const l = await db.query.wakeLogs.findFirst({ where: eq(wakeLogs.id, ds.wakeLogId) });
       if (l) {
-        log = {
-          wokeAt: l.wokeAt,
-          sleepHours: l.sleepHours,
-          isShortSleep: !!l.isShortSleep,
-        };
+        const ageMs = Date.now() - new Date(l.wokeAt).getTime();
+        if (ageMs < RESET_AFTER_MS) {
+          log = {
+            wokeAt: l.wokeAt,
+            sleepHours: l.sleepHours,
+            isShortSleep: !!l.isShortSleep,
+          };
+        }
       }
     }
+    const status = log ? (ds?.status ?? "pending") : "pending";
     return Response.json({
       today: {
-        status: ds?.status ?? "pending",
+        status,
         log: log ?? undefined,
       },
     });

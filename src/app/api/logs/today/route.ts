@@ -8,6 +8,10 @@ import { combineDayAndTimeUY, medicationTimeForDay, todayKeyUY, toIsoUY } from "
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Reset the on-screen "pressed" state 12 h after the registered press,
+// so the patient can log again if needed (button returns to pending).
+const RESET_AFTER_MS = 12 * 60 * 60 * 1000;
+
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
@@ -25,11 +29,17 @@ export async function GET(req: NextRequest) {
     let log: { takenAt: string; delayMinutes: number } | null = null;
     if (ds?.logId) {
       const l = await db.query.medicationLogs.findFirst({ where: eq(medicationLogs.id, ds.logId) });
-      if (l) log = { takenAt: l.takenAt, delayMinutes: l.delayMinutes };
+      if (l) {
+        const ageMs = Date.now() - new Date(l.takenAt).getTime();
+        if (ageMs < RESET_AFTER_MS) {
+          log = { takenAt: l.takenAt, delayMinutes: l.delayMinutes };
+        }
+      }
     }
+    const status = log ? (ds?.status ?? "pending") : "pending";
     return Response.json({
       today: {
-        status: ds?.status ?? "pending",
+        status,
         scheduledFor: toIsoUY(scheduled),
         scheduledTime,
         log: log ?? undefined,

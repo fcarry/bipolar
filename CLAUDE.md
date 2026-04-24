@@ -317,3 +317,19 @@ sudo -u deploy docker logs --since 10s bipolar-app | grep -E "twilio|alert"
 - **Audio playback en historial**: el link descarga el audio y lo abre en el reproductor del navegador, pero no tiene UI inline.
 - **Service worker offline queue**: implementado pero no testeado en producción real (poner el celular en modo avión → tap → reconectar → debería sincronizar).
 - **Healthcheck Docker**: usa `wget --spider`, podría dar falsos negativos si el contenedor es muy lento al boot. `start_period: 30s` lo cubre.
+
+---
+
+## 13. Reset visual de botones "TOMÉ LOS REMEDIOS" / "ME DESPERTÉ" a 12 h
+
+**Desde 2026-04-24 (commit `d47df43`).** Antes los dos botones grandes del home quedaban en estado "apretado" (verde con ✔, `disabled`) hasta medianoche UY. Ahora vuelven al estado natural (azul/amarillo, habilitados) **12 h después de la pulsación registrada**.
+
+**Implementación:** `src/app/api/logs/today/route.ts` y `src/app/api/wakes/today/route.ts`. Constante `RESET_AFTER_MS = 12 * 60 * 60 * 1000`. Si `Date.now() - takenAt` (o `wokeAt`) supera esa ventana, el endpoint devuelve `status: "pending"` y omite el `log`, lo que hace que el `BigButton` renderice el estado natural.
+
+**Efecto de una segunda pulsación el mismo día UY:**
+- Medicación: `POST /api/logs` inserta un nuevo `medication_logs` y hace UPDATE de `daily_status.logId` apuntando al log más reciente. Historia completa conservada en `medication_logs`. El cron de alertas sigue viendo el `daily_status` del día correctamente.
+- Despertar: `POST /api/wakes` inserta un nuevo `wake_logs`, pero el handler **solo inserta `daily_wake_status` cuando no existe**, así que el registro diario sigue apuntando al PRIMER wake log del día (inconsistencia menor preexistente, no causada por este cambio). Si se necesita que refleje la última pulsación, cambiar el `if (!existingDS)` a un UPDATE en `src/app/api/wakes/route.ts`.
+
+**Polling:** el home (`BigButton.tsx`) llama a ambos endpoints cada 60s, así que el reset visual ocurre dentro de ~1 min de cumplidas las 12 h.
+
+**El cron de alertas y el rollup diario no se ven afectados**: leen directamente `daily_status` / `daily_wake_status`, no los endpoints `/today`.

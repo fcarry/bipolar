@@ -30,7 +30,7 @@ const COLORS = {
 export function WakeChart({ userId }: { userId?: string } = {}) {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Point[]>([]);
-  const [threshold, setThreshold] = useState<number>(5);
+  const [threshold, setThreshold] = useState<number>(6);
 
   useEffect(() => {
     const q = new URLSearchParams({ days: String(days) });
@@ -70,7 +70,7 @@ export function WakeChart({ userId }: { userId?: string } = {}) {
             <XAxis dataKey="date" stroke="#999" tick={{ fontSize: 11 }} />
             <YAxis
               domain={[0, 12]}
-              ticks={[0, 2, 4, 5, 6, 8, 10, 12]}
+              ticks={[0, 2, 4, 6, 8, 10, 12]}
               tickFormatter={(v) => `${v}h`}
               stroke="#999"
               tick={{ fontSize: 11 }}
@@ -94,8 +94,8 @@ export function WakeChart({ userId }: { userId?: string } = {}) {
       </div>
 
       <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-        <span><span className="inline-block h-2 w-2 rounded-full" style={{ background: COLORS.ok }} /> ≥ 5h</span>
-        <span><span className="inline-block h-2 w-2 rounded-full" style={{ background: COLORS.short }} /> &lt; 5h</span>
+        <span><span className="inline-block h-2 w-2 rounded-full" style={{ background: COLORS.ok }} /> ≥ 6h</span>
+        <span><span className="inline-block h-2 w-2 rounded-full" style={{ background: COLORS.short }} /> &lt; 6h</span>
         <span><span className="inline-block h-2 w-2 rounded-full" style={{ background: COLORS.unknown }} /> Sin dato</span>
         <span><span className="inline-block h-2 w-2 rounded-full" style={{ background: COLORS.pending }} /> Pendiente</span>
       </div>

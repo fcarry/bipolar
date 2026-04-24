@@ -25,7 +25,7 @@ interface PlannedLate {
   createdAt?: string;
 }
 
-const LATE_THRESHOLD_MIN = 240;
+const LATE_THRESHOLD_MIN = 120;
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString("es-UY", {

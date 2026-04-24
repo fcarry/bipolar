@@ -126,7 +126,7 @@ export function WakeHistoryTable({ userId }: { userId?: string } = {}) {
                           : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    {l.isShortSleep ? "Corto <5h" : l.sleepHours != null ? "OK" : "Sin dato"}
+                    {l.isShortSleep ? "Corto <6h" : l.sleepHours != null ? "OK" : "Sin dato"}
                   </span>
                 </td>
                 <td className="px-3 py-2">{l.description || "—"}</td>

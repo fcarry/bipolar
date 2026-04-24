@@ -132,7 +132,7 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
         woke: wake ? fmtTimeUY(wake.wokeAt) : "—",
         lastMed: wake?.lastMedicationAt ? fmtTimeUY(wake.lastMedicationAt) : "—",
         sleep: sleepHours != null ? sleepHours.toFixed(2) : "—",
-        status: status === "ok" ? "OK" : status === "short" ? "CORTO (<5h)" : "Sin dato",
+        status: status === "ok" ? "OK" : status === "short" ? "CORTO (<6h)" : "Sin dato",
         description: wake?.description ?? (wake?.audioPath ? "(ver audio adjunto)" : "—"),
         audio: wake?.audioPath
           ? `despertar-${d}-${wake.wokeAt.slice(11, 16).replace(":", "")}.webm`
@@ -172,13 +172,13 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
   const total = totalOntime + totalLate + totalMissed;
   s3.addRow(["Medicación — Total días evaluados", total]);
   s3.addRow(["A tiempo", totalOntime]);
-  s3.addRow(["Tarde (>4h)", totalLate]);
+  s3.addRow(["Tarde (>2h)", totalLate]);
   s3.addRow(["Faltas", totalMissed]);
   s3.addRow(["% Cumplimiento", total ? `${Math.round((totalOntime / total) * 100)}%` : "—"]);
   if (totalWakeOk + totalWakeShort + totalWakeUnknown > 0) {
     s3.addRow([]);
-    s3.addRow(["Despertares — OK (≥5h)", totalWakeOk]);
-    s3.addRow(["Despertares — cortos (<5h)", totalWakeShort]);
+    s3.addRow(["Despertares — OK (≥6h)", totalWakeOk]);
+    s3.addRow(["Despertares — cortos (<6h)", totalWakeShort]);
     s3.addRow(["Despertares — sin dato", totalWakeUnknown]);
   }
   s3.getColumn(1).width = 36;

@@ -13,7 +13,7 @@ import { evaluateAndDispatchShortSleepAlert } from "@/lib/alerts";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SHORT_SLEEP_HOURS = 5;
+const SHORT_SLEEP_HOURS = 6;
 const MAX_SLEEP_HOURS = 24;
 const MAX_BACKDATE_HOURS = 36;
 const DATA_DIR = process.env.BIPOLAR_DATA_DIR || "/app/data";

@@ -21,7 +21,7 @@ import { evaluateAndDispatchAlert } from "@/lib/alerts";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const LATE_THRESHOLD_MIN = 240;
+const LATE_THRESHOLD_MIN = 120;
 const DATA_DIR = process.env.BIPOLAR_DATA_DIR || "/app/data";
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MAX_BACKDATE_HOURS = 36;

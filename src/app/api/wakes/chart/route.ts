@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
       points.push({ date: d, sleepHours, status });
     }
 
-    return Response.json({ points, threshold: 5 });
+    return Response.json({ points, threshold: 6 });
   } catch (err) {
     return apiErrorResponse(err);
   }

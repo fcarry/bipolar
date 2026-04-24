@@ -273,7 +273,7 @@ export async function evaluateAndDispatchShortSleepAlert(userId: string): Promis
   if (days.length < ALERT_INCIDENT_THRESHOLD) return;
   if (await hasRecentAlertOfType(userId, "short_sleep")) return;
 
-  const reason = `${days.length} días con sueño < 5h en últimos ${ALERT_WINDOW_DAYS} días: ${days.join(", ")}`;
+  const reason = `${days.length} días con sueño < 6h en últimos ${ALERT_WINDOW_DAYS} días: ${days.join(", ")}`;
   const triggeredAt = toIsoUY(nowUY());
 
   const today = todayKeyUY();
@@ -339,7 +339,7 @@ export async function evaluateAndDispatchShortSleepAlert(userId: string): Promis
   }
 
   const recipients = [user.emergencyContactEmail].filter(Boolean) as string[];
-  const subject = `[Alerta] Poco sueño (<5h) ${days.length} días en 7 — ${user.fullName}`;
+  const subject = `[Alerta] Poco sueño (<6h) ${days.length} días en 7 — ${user.fullName}`;
   const html = renderShortSleepEmailHtml({
     fullName: user.fullName,
     days,
@@ -500,7 +500,7 @@ function renderShortSleepEmailHtml(p: {
 <html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:600px;margin:auto;padding:24px;color:#222">
   <h2 style="color:#dc2626">Alerta de sueño corto</h2>
   <p>Estás recibiendo este aviso porque sos contacto de emergencia de <strong>${escapeHtml(p.fullName)}</strong>.</p>
-  <p>Detectamos <strong>${p.days.length} días con menos de 5 horas de sueño</strong> en los últimos 7 días:</p>
+  <p>Detectamos <strong>${p.days.length} días con menos de 6 horas de sueño</strong> en los últimos 7 días:</p>
   <ul>${p.days.map((d) => `<li>${d}</li>`).join("")}</ul>
   <p>Hora del aviso: <strong>${fmtDateTimeUY(p.triggeredAt)}</strong> (Uruguay).</p>
   <p>Adjuntamos el historial (medicación + despertares) de las últimas 4 semanas${p.audioCount > 0 ? ` y <strong>${p.audioCount} audio${p.audioCount === 1 ? "" : "s"}</strong> de despertar` : ""}.</p>

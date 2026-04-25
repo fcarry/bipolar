@@ -109,6 +109,10 @@ export const plannedLateDays = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     date: text("date").notNull(),
     note: text("note"),
+    plannedTakeAt: text("plannedTakeAt"),
+    audioPath: text("audioPath"),
+    callTriggeredAt: text("callTriggeredAt"),
+    callAlertId: text("callAlertId"),
     createdAt: text("createdAt").notNull(),
   },
   (t) => ({
@@ -121,7 +125,18 @@ export const alerts = sqliteTable("alerts", {
   userId: text("userId")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  type: text("type", { enum: ["medication", "short_sleep", "wake_reminder", "medication_reminder", "medication_time_reminder"] }).notNull().default("medication"),
+  type: text("type", {
+    enum: [
+      "medication",
+      "short_sleep",
+      "wake_reminder",
+      "medication_reminder",
+      "medication_time_reminder",
+      "medication_planned_reminder",
+    ],
+  })
+    .notNull()
+    .default("medication"),
   triggeredAt: text("triggeredAt").notNull(),
   reason: text("reason").notNull(),
   emailsSentTo: text("emailsSentTo").notNull(),

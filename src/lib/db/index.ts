@@ -112,6 +112,10 @@ export function initSchema() {
       userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       date TEXT NOT NULL,
       note TEXT,
+      plannedTakeAt TEXT,
+      audioPath TEXT,
+      callTriggeredAt TEXT,
+      callAlertId TEXT,
       createdAt TEXT NOT NULL,
       UNIQUE(userId, date)
     );
@@ -190,7 +194,6 @@ export function initSchema() {
     }
   }
   if (addedAnyPerDay) {
-    // Seed every per-day column with the legacy medicationTime value so existing users keep working.
     s.exec(`UPDATE users SET
       medicationTimeMon = COALESCE(medicationTimeMon, medicationTime),
       medicationTimeTue = COALESCE(medicationTimeTue, medicationTime),
@@ -206,6 +209,22 @@ export function initSchema() {
   if (!usersColNames.has("monitoringEnabled")) {
     s.exec(`ALTER TABLE users ADD COLUMN monitoringEnabled INTEGER NOT NULL DEFAULT 1;`);
     console.log("[db] migrated: added users.monitoringEnabled column");
+  }
+
+  // Backfill: extend planned_late_days for postpone-with-time + audio + scheduled call.
+  const plCols = s.prepare("PRAGMA table_info(planned_late_days)").all() as { name: string }[];
+  const plColNames = new Set(plCols.map((c) => c.name));
+  const plExtras: [string, string][] = [
+    ["plannedTakeAt", "TEXT"],
+    ["audioPath", "TEXT"],
+    ["callTriggeredAt", "TEXT"],
+    ["callAlertId", "TEXT"],
+  ];
+  for (const [col, type] of plExtras) {
+    if (!plColNames.has(col)) {
+      s.exec(`ALTER TABLE planned_late_days ADD COLUMN ${col} ${type};`);
+      console.log(`[db] migrated: added planned_late_days.${col} column`);
+    }
   }
 }
 

@@ -24,6 +24,7 @@ interface TodayWake {
 interface PlannedLate {
   date: string;
   note: string | null;
+  plannedTakeAt: string | null;
   createdAt?: string;
 }
 
@@ -130,11 +131,11 @@ export function BigButton({ user }: { user: MeUser }) {
     }
   }
 
-  async function commitPlanLate(note: string) {
+  async function commitPlanLate(p: { plannedTakeAt: string; note: string; audio: Blob | null }) {
     setSubmitting(true);
     setErr(null);
     try {
-      await api("/api/plan-late", { method: "POST", json: { note: note || undefined } });
+      const fd = new FormData(); fd.append("plannedTakeAt", p.plannedTakeAt); if (p.note) fd.append("note", p.note); if (p.audio) fd.append("audio", p.audio, "audio.webm"); await api("/api/plan-late", { method: "POST", formData: fd });
       setPlanModalOpen(false);
       setFlash("Postergación registrada ✔");
       setTimeout(() => setFlash(null), 3000);
@@ -222,7 +223,7 @@ export function BigButton({ user }: { user: MeUser }) {
       {!medTaken && plannedLate && (
         <div className="-mt-2 flex items-center gap-2 rounded-full bg-warning/20 px-4 py-2 text-sm text-warning-foreground">
           <Clock size={16} />
-          <span>Postergación registrada{plannedLate.note ? ` — ${plannedLate.note}` : ""}</span>
+          <span>Postergación: tomar a las {plannedLate.plannedTakeAt ? fmtTime(plannedLate.plannedTakeAt) : "—"}{plannedLate.note ? ` · ${plannedLate.note}` : ""}</span>
           <button
             type="button"
             className="rounded-full p-1 hover:bg-black/10"

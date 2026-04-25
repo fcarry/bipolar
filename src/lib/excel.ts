@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import ExcelJS from "exceljs";
 import { addDaysUY, dayKeyUY, fmtDateUY, fmtTimeUY, medicationTimeForDay, todayKeyUY } from "./time";
 import type { MedicationLog, User, WakeLog } from "./db/schema";
+import { renderSleepHoursPng, renderWakeTimesPng } from "./charts";
 
 const DATA_DIR = process.env.BIPOLAR_DATA_DIR || "/app/data";
 
@@ -146,6 +147,53 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
       else if (status === "short") totalWakeShort++;
       else totalWakeUnknown++;
     }
+  }
+
+  // ---------- Charts (PNG embedded) — last 30 days ----------
+  try {
+    const chartFromKey = addDaysUY(today, -29);
+    const chartDaysSeq: string[] = [];
+    for (let i = 0; i < 30; i++) chartDaysSeq.push(addDaysUY(chartFromKey, i));
+
+    // Sleep hours per day
+    const sleepPoints = chartDaysSeq.map((dk) => ({
+      dayKey: dk,
+      sleepHours:
+        (input.dailyWakeStatuses ?? []).find((d) => d.date === dk)?.sleepHours ??
+        wakesByDay.get(dk)?.sleepHours ??
+        null,
+    }));
+    const sleepPng = await renderSleepHoursPng(sleepPoints);
+    const sleepImgId = wb.addImage({ buffer: sleepPng, extension: "png" });
+    const sleepSheet = wb.addWorksheet("Gráfico Sueño 30d");
+    sleepSheet.addImage(sleepImgId, { tl: { col: 0, row: 0 }, ext: { width: 900, height: 450 } });
+    sleepSheet.getColumn(1).width = 12;
+    sleepSheet.getRow(24).getCell(1).value = "Verde ≥ 6h · Rojo < 6h · Gris sin dato";
+    sleepSheet.getRow(24).getCell(1).font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
+
+    // Wake times (hour-of-day) per day
+    const wakePoints = chartDaysSeq
+      .map((dk) => {
+        const w = wakesByDay.get(dk);
+        if (!w) return null;
+        const dt = new Date(w.wokeAt);
+        const hourFraction =
+          dt.getUTCHours() - 3 + dt.getUTCMinutes() / 60; // UY = UTC-3
+        const hf = ((hourFraction % 24) + 24) % 24;
+        return { dayKey: dk, hourFraction: hf };
+      })
+      .filter((p): p is { dayKey: string; hourFraction: number } => p !== null);
+    if (wakePoints.length > 0) {
+      const wakePng = await renderWakeTimesPng(wakePoints);
+      const wakeImgId = wb.addImage({ buffer: wakePng, extension: "png" });
+      const wakeSheet = wb.addWorksheet("Gráfico Despertares 30d");
+      wakeSheet.addImage(wakeImgId, { tl: { col: 0, row: 0 }, ext: { width: 900, height: 450 } });
+      wakeSheet.getColumn(1).width = 12;
+      wakeSheet.getRow(24).getCell(1).value = `Total despertares registrados: ${wakePoints.length}`;
+      wakeSheet.getRow(24).getCell(1).font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
+    }
+  } catch (e) {
+    console.error("[excel] chart generation failed (non-fatal):", e);
   }
 
   // ---------- Sheet 4: Resumen ----------

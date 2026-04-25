@@ -17,7 +17,14 @@ export async function GET(req: NextRequest) {
       where: and(eq(plannedLateDays.userId, user.id), eq(plannedLateDays.date, dayKey)),
     });
     return Response.json({
-      plannedLate: row ? { date: row.date, note: row.note, createdAt: row.createdAt } : null,
+      plannedLate: row
+        ? {
+            date: row.date,
+            note: row.note,
+            plannedTakeAt: row.plannedTakeAt ?? null,
+            createdAt: row.createdAt,
+          }
+        : null,
     });
   } catch (err) {
     return apiErrorResponse(err);

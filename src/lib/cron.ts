@@ -1,6 +1,6 @@
 import "server-only";
 import cron from "node-cron";
-import { checkMedicationRemindersForAllUsers, checkMedicationTimeRemindersForAllUsers, checkWakeRemindersForAllUsers, dailyRollup, markMissedDays } from "./alerts";
+import { checkMedicationRemindersForAllUsers, checkMedicationTimeRemindersForAllUsers, checkPlannedLateRemindersForAllUsers, checkWakeRemindersForAllUsers, dailyRollup, markMissedDays } from "./alerts";
 import { pollAndDispatch } from "./twilio";
 
 let started = false;
@@ -33,6 +33,11 @@ export function startCron() {
         console.error("[cron] checkMedicationTimeReminders:", e);
       }
       try {
+        await checkPlannedLateRemindersForAllUsers();
+      } catch (e) {
+        console.error("[cron] checkPlannedLateReminders:", e);
+      }
+      try {
         await pollAndDispatch();
       } catch (e) {
         console.error("[cron] pollAndDispatch:", e);
@@ -53,5 +58,5 @@ export function startCron() {
     { timezone: "America/Montevideo" },
   );
 
-  console.log("[cron] scheduled: */1m (missed+wake+med-reminder+med-time+twilio) and 23:59 UY daily");
+  console.log("[cron] scheduled: */1m (missed+wake+med-reminder+med-time+planned-late+twilio) and 23:59 UY daily");
 }

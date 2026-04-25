@@ -2,7 +2,7 @@ import "server-only";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { v4 as uuid } from "uuid";
-import { and, desc, eq, gte, lt } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import { getDb } from "./db";
 import {
   alerts,
@@ -27,7 +27,12 @@ import {
   todayKeyUY,
   toIsoUY,
 } from "./time";
-import { scheduleFirstRoundCall, scheduleMedicationReminderCall, scheduleWakeReminderCall } from "./twilio";
+import {
+  scheduleFirstRoundCall,
+  scheduleMedicationPlannedReminderCall,
+  scheduleMedicationReminderCall,
+  scheduleWakeReminderCall,
+} from "./twilio";
 
 const ALERT_INCIDENT_THRESHOLD = 3;
 const ALERT_WINDOW_DAYS = 7;
@@ -77,6 +82,39 @@ async function hasRecentAlertOfType(
     .where(and(eq(alerts.userId, userId), eq(alerts.type, type), gte(alerts.triggeredAt, cutoff)))
     .limit(1);
   return recent.length > 0;
+}
+
+/** Collect planned-late audios in window, append to attachments (respects MAX cap). */
+async function appendPlannedLateAudios(
+  userId: string,
+  fromDayKey: string,
+  audioAttachments: Attachment[],
+  runningSize: { value: number },
+): Promise<{ included: string[]; skipped: number }> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(plannedLateDays)
+    .where(and(eq(plannedLateDays.userId, userId), gte(plannedLateDays.date, fromDayKey)));
+  const included: string[] = [];
+  let skipped = 0;
+  for (const r of rows) {
+    if (!r.audioPath) continue;
+    try {
+      const buf = await fs.readFile(r.audioPath);
+      if (runningSize.value + buf.byteLength > MAX_AUDIO_TOTAL_BYTES) {
+        skipped++;
+        continue;
+      }
+      const filename = `postergacion-${r.date}.webm`;
+      audioAttachments.push({ filename, content: buf });
+      included.push(r.id);
+      runningSize.value += buf.byteLength;
+    } catch {
+      skipped++;
+    }
+  }
+  return { included, skipped };
 }
 
 export async function markMissedDays(): Promise<string[]> {
@@ -187,26 +225,31 @@ export async function evaluateAndDispatchAlert(userId: string): Promise<void> {
   });
 
   const sevenAgo = addDaysUY(today, -(ALERT_WINDOW_DAYS - 1));
+  const fourWeeksAgoKey = addDaysUY(today, -27);
   const audioLogs = logs.filter((l) => l.audioPath && dayKeyUY(l.takenAt) >= sevenAgo);
   const audioAttachments: Attachment[] = [];
   const included: string[] = [];
   let skipped = 0;
-  let runningSize = excelBuf.byteLength;
+  const sizeRef = { value: excelBuf.byteLength };
   for (const l of audioLogs) {
     try {
       const buf = await fs.readFile(l.audioPath as string);
-      if (runningSize + buf.byteLength > MAX_AUDIO_TOTAL_BYTES) {
+      if (sizeRef.value + buf.byteLength > MAX_AUDIO_TOTAL_BYTES) {
         skipped++;
         continue;
       }
       const filename = `audio-${dayKeyUY(l.takenAt)}-${l.takenAt.slice(11, 16).replace(":", "")}.webm`;
       audioAttachments.push({ filename, content: buf });
       included.push(l.id);
-      runningSize += buf.byteLength;
+      sizeRef.value += buf.byteLength;
     } catch {
       skipped++;
     }
   }
+  // Append planned-late audios from the same 4-week window
+  const pl = await appendPlannedLateAudios(userId, fourWeeksAgoKey, audioAttachments, sizeRef);
+  included.push(...pl.included);
+  skipped += pl.skipped;
 
   const recipients = [user.emergencyContactEmail].filter(Boolean) as string[];
   const subject = `[Alerta] Incumplimiento de medicación — ${user.fullName}`;
@@ -315,28 +358,32 @@ export async function evaluateAndDispatchShortSleepAlert(userId: string): Promis
   });
 
   const sevenAgo = addDaysUY(today, -(ALERT_WINDOW_DAYS - 1));
+  const fourWeeksAgoKey = addDaysUY(today, -27);
   const wakeAudioLogs: WakeLog[] = wakes.filter(
     (w) => w.audioPath && dayKeyUY(w.wokeAt) >= sevenAgo,
   );
   const audioAttachments: Attachment[] = [];
   const included: string[] = [];
   let skipped = 0;
-  let runningSize = excelBuf.byteLength;
+  const sizeRef = { value: excelBuf.byteLength };
   for (const w of wakeAudioLogs) {
     try {
       const buf = await fs.readFile(w.audioPath as string);
-      if (runningSize + buf.byteLength > MAX_AUDIO_TOTAL_BYTES) {
+      if (sizeRef.value + buf.byteLength > MAX_AUDIO_TOTAL_BYTES) {
         skipped++;
         continue;
       }
       const filename = `despertar-${dayKeyUY(w.wokeAt)}-${w.wokeAt.slice(11, 16).replace(":", "")}.webm`;
       audioAttachments.push({ filename, content: buf });
       included.push(w.id);
-      runningSize += buf.byteLength;
+      sizeRef.value += buf.byteLength;
     } catch {
       skipped++;
     }
   }
+  const pl = await appendPlannedLateAudios(userId, fourWeeksAgoKey, audioAttachments, sizeRef);
+  included.push(...pl.included);
+  skipped += pl.skipped;
 
   const recipients = [user.emergencyContactEmail].filter(Boolean) as string[];
   const subject = `[Alerta] Poco sueño (<6h) ${days.length} días en 7 — ${user.fullName}`;
@@ -481,7 +528,7 @@ function renderEmergencyEmailHtml(p: {
   <p>Detectamos <strong>${p.days.length} incidentes</strong> de medicación en los últimos 7 días:</p>
   <ul>${p.days.map((d) => `<li>${d}</li>`).join("")}</ul>
   <p>Hora del aviso: <strong>${fmtDateTimeUY(p.triggeredAt)}</strong> (Uruguay).</p>
-  <p>Adjuntamos el historial de las últimas 4 semanas en Excel${p.audioCount > 0 ? ` y <strong>${p.audioCount} grabación${p.audioCount === 1 ? "" : "es"} de audio</strong>` : ""}.</p>
+  <p>Adjuntamos el historial de las últimas 4 semanas en Excel${p.audioCount > 0 ? ` y <strong>${p.audioCount} grabación${p.audioCount === 1 ? "" : "es"} de audio</strong> (incluye notas de postergación si las hubo)` : ""}.</p>
   ${p.audioSkipped > 0 ? `<p style="color:#92400e"><em>Se omitieron ${p.audioSkipped} audio(s) por límite de 40MB.</em></p>` : ""}
   <p>Por favor, contactá al paciente lo antes posible.</p>
   <hr/>
@@ -503,7 +550,7 @@ function renderShortSleepEmailHtml(p: {
   <p>Detectamos <strong>${p.days.length} días con menos de 6 horas de sueño</strong> en los últimos 7 días:</p>
   <ul>${p.days.map((d) => `<li>${d}</li>`).join("")}</ul>
   <p>Hora del aviso: <strong>${fmtDateTimeUY(p.triggeredAt)}</strong> (Uruguay).</p>
-  <p>Adjuntamos el historial (medicación + despertares) de las últimas 4 semanas${p.audioCount > 0 ? ` y <strong>${p.audioCount} audio${p.audioCount === 1 ? "" : "s"}</strong> de despertar` : ""}.</p>
+  <p>Adjuntamos el historial (medicación + despertares) de las últimas 4 semanas${p.audioCount > 0 ? ` y <strong>${p.audioCount} audio${p.audioCount === 1 ? "" : "s"}</strong> (despertar y postergaciones)` : ""}.</p>
   ${p.audioSkipped > 0 ? `<p style="color:#92400e"><em>Se omitieron ${p.audioSkipped} audio(s) por límite de 40MB.</em></p>` : ""}
   <p>Por favor, contactá al paciente lo antes posible.</p>
   <hr/>
@@ -542,24 +589,21 @@ export async function evaluateAndDispatchMedicationReminder(userId: string): Pro
   if (!user || user.role !== "user" || !user.patientPhone) return;
   if (!user.monitoringEnabled) return;
 
-  // Determine the most recent scheduled slot (today's, or yesterday's if today's is still in the future).
   const today = todayKeyUY();
   const todayTime = medicationTimeForDay(user, today);
   if (!todayTime) return;
   let scheduledTimeUsed = todayTime;
-  let scheduledDayUsed = today;
   let scheduled = combineDayAndTimeUY(today, todayTime);
   if (scheduled.getTime() > nowUY().getTime()) {
     const y = addDaysUY(today, -1);
     const yTime = medicationTimeForDay(user, y);
     if (!yTime) return;
     scheduledTimeUsed = yTime;
-    scheduledDayUsed = y;
     scheduled = combineDayAndTimeUY(y, yTime);
   }
   const hoursSince = (nowUY().getTime() - scheduled.getTime()) / 3_600_000;
   if (hoursSince < MEDICATION_REMINDER_HOURS) return;
-  if (hoursSince >= 12) return; // already in "missed" territory — regular pipeline takes over
+  if (hoursSince >= 12) return;
 
   const scheduledDay = dayKeyUY(scheduled);
   if (await hasPlannedLateForDay(userId, scheduledDay)) return;
@@ -641,7 +685,7 @@ export async function evaluateAndDispatchMedicationTimeReminder(userId: string):
   const scheduled = combineDayAndTimeUY(today, todayTime);
   const diffMin = Math.abs(nowUY().getTime() - scheduled.getTime()) / 60_000;
   if (diffMin > MEDICATION_TIME_WINDOW_MIN) return;
-  if (nowUY().getTime() < scheduled.getTime() - 30_000) return; // only at or after the hour
+  if (nowUY().getTime() < scheduled.getTime() - 30_000) return;
 
   if (await hasPlannedLateForDay(userId, today)) return;
 
@@ -699,4 +743,104 @@ export async function checkMedicationTimeRemindersForAllUsers(): Promise<void> {
       console.error(`[alerts] medication-time reminder check failed for user=${u.id}:`, e);
     }
   }
+}
+
+/* New: planned-late reminder — call patient at the time they themselves chose. */
+
+const PLANNED_LATE_WINDOW_MIN = 5; // tolerance: fire if [-1m, +5m] around plannedTakeAt
+
+export async function checkPlannedLateRemindersForAllUsers(): Promise<void> {
+  const db = getDb();
+  const nowMs = nowUY().getTime();
+  const cutoffPastIso = toIsoUY(new Date(nowMs - PLANNED_LATE_WINDOW_MIN * 60_000));
+  const cutoffFutureIso = toIsoUY(new Date(nowMs + 60_000));
+
+  const dueRows = await db
+    .select()
+    .from(plannedLateDays)
+    .where(
+      and(
+        isNull(plannedLateDays.callTriggeredAt),
+        gte(plannedLateDays.plannedTakeAt, cutoffPastIso),
+        lte(plannedLateDays.plannedTakeAt, cutoffFutureIso),
+      ),
+    );
+
+  for (const row of dueRows) {
+    if (!row.plannedTakeAt) continue;
+    try {
+      await evaluateAndDispatchPlannedLateReminder(row.id);
+    } catch (e) {
+      console.error(`[alerts] planned-late reminder failed for row=${row.id}:`, e);
+    }
+  }
+}
+
+export async function evaluateAndDispatchPlannedLateReminder(plannedLateId: string): Promise<void> {
+  const db = getDb();
+  const row = await db.query.plannedLateDays.findFirst({
+    where: eq(plannedLateDays.id, plannedLateId),
+  });
+  if (!row || !row.plannedTakeAt || row.callTriggeredAt) return;
+
+  const user = await db.query.users.findFirst({ where: eq(users.id, row.userId) });
+  if (!user || user.role !== "user" || !user.patientPhone) {
+    await db
+      .update(plannedLateDays)
+      .set({ callTriggeredAt: toIsoUY(nowUY()) })
+      .where(eq(plannedLateDays.id, row.id));
+    return;
+  }
+  if (!user.monitoringEnabled) {
+    await db
+      .update(plannedLateDays)
+      .set({ callTriggeredAt: toIsoUY(nowUY()) })
+      .where(eq(plannedLateDays.id, row.id));
+    return;
+  }
+
+  // Skip if user already took medication around the planned time (within +/- 30 min).
+  const plannedMs = new Date(row.plannedTakeAt).getTime();
+  const fromIso = toIsoUY(new Date(plannedMs - 30 * 60_000));
+  const recentLog = await db
+    .select()
+    .from(medicationLogs)
+    .where(and(eq(medicationLogs.userId, user.id), gte(medicationLogs.takenAt, fromIso)))
+    .limit(1);
+  if (recentLog.length > 0) {
+    await db
+      .update(plannedLateDays)
+      .set({ callTriggeredAt: toIsoUY(nowUY()) })
+      .where(eq(plannedLateDays.id, row.id));
+    console.log(`[alerts] planned-late ${row.id}: medication already taken near planned time, skipping call`);
+    return;
+  }
+
+  const triggeredAt = toIsoUY(nowUY());
+  const alertId = uuid();
+  const reason = `Recordatorio de toma postergada (estimada ${fmtDateTimeUY(row.plannedTakeAt)}${row.note ? ` — ${row.note}` : ""})`;
+  await db.insert(alerts).values({
+    id: alertId,
+    userId: user.id,
+    type: "medication_planned_reminder",
+    triggeredAt,
+    reason,
+    emailsSentTo: JSON.stringify([]),
+    excelPath: null,
+    audioLogIds: null,
+    audioAttachmentCount: 0,
+    audioSkippedForSize: 0,
+    contactReached: null,
+    callsExhausted: 0,
+    nextRoundStartAt: null,
+    createdAt: triggeredAt,
+  });
+
+  await db
+    .update(plannedLateDays)
+    .set({ callTriggeredAt: triggeredAt, callAlertId: alertId })
+    .where(eq(plannedLateDays.id, row.id));
+
+  console.log(`[alerts] planned-late reminder dispatched for user=${user.id} planned=${row.plannedTakeAt}`);
+  await scheduleMedicationPlannedReminderCall(alertId, user);
 }

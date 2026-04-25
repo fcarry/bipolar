@@ -164,7 +164,7 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
         null,
     }));
     const sleepPng = await renderSleepHoursPng(sleepPoints);
-    const sleepImgId = wb.addImage({ buffer: sleepPng, extension: "png" });
+    const sleepImgId = wb.addImage({ buffer: sleepPng as unknown as ArrayBuffer, extension: "png" });
     const sleepSheet = wb.addWorksheet("Gráfico Sueño 30d");
     sleepSheet.addImage(sleepImgId, { tl: { col: 0, row: 0 }, ext: { width: 900, height: 450 } });
     sleepSheet.getColumn(1).width = 12;
@@ -185,7 +185,7 @@ export async function generateAlertExcel(input: ExcelInput): Promise<{ filePath:
       .filter((p): p is { dayKey: string; hourFraction: number } => p !== null);
     if (wakePoints.length > 0) {
       const wakePng = await renderWakeTimesPng(wakePoints);
-      const wakeImgId = wb.addImage({ buffer: wakePng, extension: "png" });
+      const wakeImgId = wb.addImage({ buffer: wakePng as unknown as ArrayBuffer, extension: "png" });
       const wakeSheet = wb.addWorksheet("Gráfico Despertares 30d");
       wakeSheet.addImage(wakeImgId, { tl: { col: 0, row: 0 }, ext: { width: 900, height: 450 } });
       wakeSheet.getColumn(1).width = 12;

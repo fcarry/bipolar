@@ -2,7 +2,7 @@
 
 PWA Next.js para registrar la toma diaria de medicación con un solo tap. Si un paciente acumula 3 incidentes (tarde > 4h o no tomado) en 7 días, dispara alertas automáticas: email al contacto de emergencia con historial Excel + audios adjuntos, y escalada de llamadas Twilio con TTS en español.
 
-**Producción:** https://bipolar.tumvp.uy/
+**Producción:** https://bipolar.mandarinasoftware.uy/ (oficial desde 2026-04-25). Legacy https://bipolar.tumvp.uy/ sigue activo en paralelo como fallback.
 **Repo:** https://github.com/fcarry/bipolar
 
 ---
@@ -25,7 +25,7 @@ PWA Next.js para registrar la toma diaria de medicación con un solo tap. Si un 
 | PWA | Manifest + service worker manual con IndexedDB queue para POSTs offline |
 | Validación | Zod en todos los endpoints |
 | Container | Multi-stage Dockerfile, runtime user `bipolar` uid 1001, TZ `America/Montevideo` |
-| Reverse proxy | Nginx (vhost en `nginx/bipolar.tumvp.uy.conf`, sincronizado por autodeploy) |
+| Reverse proxy | Nginx (vhosts en `nginx/bipolar.mandarinasoftware.uy.conf` y legacy `nginx/bipolar.tumvp.uy.conf`, sincronizados por autodeploy) |
 
 ---
 
@@ -54,7 +54,8 @@ PWA Next.js para registrar la toma diaria de medicación con un solo tap. Si un 
 ├── .env.example                    # Plantilla de env (sin valores reales)
 ├── PRD.md                          # PRD + Anexo A
 ├── nginx/
-│   └── bipolar.tumvp.uy.conf       # Vhost (sincronizado al host por autodeploy)
+│   ├── bipolar.mandarinasoftware.uy.conf   # Vhost OFICIAL (sincronizado al host por autodeploy)
+│   └── bipolar.tumvp.uy.conf               # Vhost LEGACY (fallback, sigue activo)
 ├── public/
 │   ├── manifest.json               # PWA manifest
 │   ├── sw.js                       # Service worker (cache + offline queue)
@@ -333,3 +334,68 @@ sudo -u deploy docker logs --since 10s bipolar-app | grep -E "twilio|alert"
 **Polling:** el home (`BigButton.tsx`) llama a ambos endpoints cada 60s, así que el reset visual ocurre dentro de ~1 min de cumplidas las 12 h.
 
 **El cron de alertas y el rollup diario no se ven afectados**: leen directamente `daily_status` / `daily_wake_status`, no los endpoints `/today`.
+
+---
+
+## 14. Cutover a `bipolar.mandarinasoftware.uy` (2026-04-25)
+
+**Estado:** dominio nuevo `bipolar.mandarinasoftware.uy` ACTIVO como dominio oficial. Legacy `bipolar.tumvp.uy` se mantiene activo en paralelo como fallback (ambos vhosts cohabitan).
+
+**Cert Let's Encrypt:**
+- `/etc/letsencrypt/live/bipolar.mandarinasoftware.uy/` — emitido vía webroot `-w /var/www/html`, expira 2026-07-24, renovación automática por `certbot.timer` (corre 2× por día).
+- Legacy `/etc/letsencrypt/live/bipolar.tumvp.uy/` sigue activo, expira 2026-07-21.
+
+**Vhost nuevo:** `nginx/bipolar.mandarinasoftware.uy.conf` en el repo (sincronizado al host por autodeploy a `/etc/nginx/sites-enabled/`). Espejo del config legacy: HTTP→HTTPS redirect con location `/.well-known/acme-challenge/` rooteada en `/var/www/html`, HTTPS server `listen 443 ssl + http2 on`, headers de seguridad (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy con `microphone=(self)`), `client_max_body_size 30M` para uploads de audio, location `/api/twilio/` con `Host` preservado para validación HMAC, location `/` con WebSocket headers + `proxy_buffering off` para streaming. Logs separados en `/var/log/nginx/bipolar.mandarinasoftware.{access,error}.log`.
+
+**Procedimiento de emisión (ejecutado 2026-04-25):**
+1. Nginx no tiene `default_server` definido, así que ACME challenge a un dominio nuevo cae 404. Se desplegó un vhost HTTP-only temporal en `/etc/nginx/sites-enabled/bipolar.mandarinasoftware.uy.conf` con sólo el server block port 80 + location `/.well-known/acme-challenge/` rooteada en `/var/www/html` + redirect 301 al resto.
+2. `sudo nginx -t && sudo systemctl reload nginx`.
+3. `sudo certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos -m fcarriquiry@gmail.com -d bipolar.mandarinasoftware.uy` → cert emitido.
+4. Se reemplazó el vhost temporal por el completo (HTTP + HTTPS), nginx -t, reload.
+5. Commit `9b287d8` agrega el vhost al repo bajo `nginx/bipolar.mandarinasoftware.uy.conf` para que el autodeploy lo persista entre reconstrucciones.
+
+**Renovación:** automática vía `certbot.timer` (systemd, ya activo desde el deploy inicial). No hay nada manual que hacer.
+
+**Procedimiento para emitir un cert para un dominio futuro adicional:** seguir los pasos 1–5 anteriores. La clave es que sin `default_server`, el primer match falla 404 — hay que crear un vhost HTTP-only que catche el dominio antes de pedirle el cert a certbot.
+
+---
+
+## 15. Login: toggle de visibilidad de contraseña (2026-04-25, commit `034b75f`)
+
+`src/app/login/page.tsx` ahora muestra un ícono de ojo dentro del input de contraseña que togglea entre `type="password"` y `type="text"`. Implementación:
+
+- Estado local `const [showPassword, setShowPassword] = useState(false);`.
+- Íconos `Eye` / `EyeOff` de `lucide-react` (ya está en deps por otros componentes — no agregamos dep nueva).
+- El input se envuelve en un `<div className="relative">` con `pr-10` en el input + `<button type="button" className="absolute inset-y-0 right-0 ...">` con el ícono.
+- A11y: `aria-label` dinámico ("Mostrar contraseña" / "Ocultar contraseña"), `aria-pressed={showPassword}`, `tabIndex={-1}` para no romper el flujo natural de Tab (Tab va del input a "Ingresar", el ojo es opcional con click/touch).
+- `type="button"` en el botón para que no submitee el form.
+
+---
+
+## 16. Reset de contraseña forzado vía SQLite (runbook)
+
+Si se necesita resetear la contraseña de un usuario sin acceso al UI (por ejemplo, paciente que la olvidó), el procedimiento es:
+
+```bash
+# 1. Localizar el usuario
+sudo sqlite3 /opt/repos/Bipolar/data/bipolar.db \
+  "SELECT id, username, role FROM users WHERE username='<email-o-username>';"
+
+# 2. Generar hash bcrypt cost 12 (usa Python en el host; bcryptjs no está en standalone)
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'<plain-password>', bcrypt.gensalt(12)).decode())"
+
+# 3. Aplicar
+sudo sqlite3 /opt/repos/Bipolar/data/bipolar.db \
+  "UPDATE users SET passwordHash='<hash-from-step-2>', updatedAt=datetime('now') WHERE username='<...>';"
+
+# 4. Verificar con login real
+curl -s -X POST https://bipolar.mandarinasoftware.uy/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"<...>","password":"<plain>"}' | head -c 200
+```
+
+**Compatibilidad de prefijos bcrypt:** Python `bcrypt.hashpw` produce hashes con prefijo `$2b$`. La app usa `bcryptjs` que verifica `$2a$` / `$2b$` / `$2y$` indistintamente, así que no hay que convertir.
+
+**Sesiones existentes:** este reset NO invalida sesiones previas (el código no consulta `passwordHash` en cada request — sólo en login). Si se quiere forzar logout: `DELETE FROM sessions WHERE userId='<id>';`.
+
+**Histórico aplicado 2026-04-25:** password de `fcarriquiry@gmail.com` (rol `user`, id `d9683d33-acdf-4e96-8172-918920ecb556`) seteada a `recontrabipolar`.

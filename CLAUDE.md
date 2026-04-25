@@ -399,3 +399,37 @@ curl -s -X POST https://bipolar.mandarinasoftware.uy/api/auth/login \
 **Sesiones existentes:** este reset NO invalida sesiones previas (el código no consulta `passwordHash` en cada request — sólo en login). Si se quiere forzar logout: `DELETE FROM sessions WHERE userId='<id>';`.
 
 **Histórico aplicado 2026-04-25:** password de `fcarriquiry@gmail.com` (rol `user`, id `d9683d33-acdf-4e96-8172-918920ecb556`) seteada a `recontrabipolar`.
+
+---
+
+## 17. Username case-insensitive (2026-04-25, commit `4c721a3`)
+
+Los usernames se persisten y comparan **siempre en lowercase**. La normalización ocurre a nivel de validación Zod, **no** a nivel de SQLite.
+
+**Implementación (`src/lib/validation.ts`):**
+
+```ts
+const usernameLogin  = z.string().trim().min(1).max(64).transform((v) => v.toLowerCase());
+const usernameCreate = z.string().trim().min(3).max(64).transform((v) => v.toLowerCase());
+
+export const loginSchema      = z.object({ username: usernameLogin,  password: z.string()... });
+export const createUserSchema = z.object({ username: usernameCreate, ... });
+// updateUserSchema hereda via .partial()
+```
+
+**Seed admin (`src/lib/db/seed.ts`):** `process.env.ADMIN_USERNAME?.toLowerCase()` antes de insertar, así si alguien pone `ADMIN_USERNAME=Admin` en el `.env` igual queda `admin` en la DB.
+
+**Por qué así (decisión de diseño):**
+- La UNIQUE constraint de SQLite sobre `users.username` es case-sensitive nativamente. Como **siempre** escribimos en lowercase, la constraint sigue garantizando unicidad correctamente sin tener que cambiar a `COLLATE NOCASE`.
+- Toda lookup (login, create check, etc.) usa `data.username` que ya viene lowercased post-`schema.parse()`.
+- No requiere migración de datos: los usuarios existentes (`admin`, `fcarriquiry@gmail.com`) ya estaban en lowercase. Si en el futuro se inserta data desde fuera de los endpoints (p.ej. import directo a SQLite), aplicar `UPDATE users SET username = LOWER(username) WHERE username != LOWER(username);`.
+
+**Tests pasados (2026-04-25):**
+| Input | Resultado |
+|---|---|
+| `fcarriquiry@gmail.com` | 200 + JWT |
+| `FCARRIQUIRY@GMAIL.COM` | 200 + JWT |
+| `FCarriquiry@Gmail.com` | 200 + JWT |
+| `  Admin  ` (padding + capitalized) | 200 + JWT (admin) |
+
+**Si en el futuro hace falta hacer la UNIQUE constraint case-insensitive a nivel SQLite:** `CREATE UNIQUE INDEX users_username_nocase ON users(username COLLATE NOCASE);` y dropear la `UNIQUE` original. Por ahora innecesario.

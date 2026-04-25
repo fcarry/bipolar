@@ -8,7 +8,7 @@ import { toIsoUY, nowUY } from "../time";
 
 export async function seedAdminIfMissing() {
   const db = getDb();
-  const username = process.env.ADMIN_USERNAME;
+  const username = process.env.ADMIN_USERNAME?.toLowerCase();
   const password = process.env.ADMIN_PASSWORD;
   if (!username || !password) {
     console.warn("[seed] ADMIN_USERNAME/ADMIN_PASSWORD missing — skipping admin seed");

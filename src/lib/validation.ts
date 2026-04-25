@@ -1,7 +1,11 @@
 import { z } from "zod";
 
+// Username is case-insensitive — siempre se persiste y compara en lowercase.
+const usernameLogin = z.string().trim().min(1).max(64).transform((v) => v.toLowerCase());
+const usernameCreate = z.string().trim().min(3).max(64).transform((v) => v.toLowerCase());
+
 export const loginSchema = z.object({
-  username: z.string().trim().min(1).max(64),
+  username: usernameLogin,
   password: z.string().min(1).max(256),
 });
 
@@ -9,7 +13,7 @@ const e164 = z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Phone must be E.164 (
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Must be HH:mm");
 
 export const createUserSchema = z.object({
-  username: z.string().trim().min(3).max(64),
+  username: usernameCreate,
   password: z.string().min(8).max(256),
   fullName: z.string().trim().min(1).max(120),
   medicationTime: hhmm,

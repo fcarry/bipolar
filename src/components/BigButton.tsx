@@ -34,6 +34,7 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString("es-UY", {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
     timeZone: "America/Montevideo",
   });
 }
@@ -49,6 +50,7 @@ function fmtDateTime(iso: string) {
   const time = d.toLocaleTimeString("es-UY", {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
     timeZone: "America/Montevideo",
   });
   return `${date} ${time}`;
